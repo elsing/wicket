@@ -330,6 +330,40 @@ func (d *DB) ListDevicesByUser(ctx context.Context, userID string) ([]*Device, e
 }
 
 func (d *DB) ListAllDevices(ctx context.Context) ([]*Device, error) {
+	rows, err := d.sql.QueryContext(ctx, `
+		SELECT d.id, d.user_id, d.group_id, d.name, d.public_key, d.assigned_ip,
+		       d.is_approved, d.is_active, d.auto_renew, d.config_downloaded,
+		       d.created_at, d.updated_at, d.last_seen_at,
+		       u.email, u.display_name, g.name as group_name
+		FROM devices d
+		LEFT JOIN users u ON u.id = d.user_id
+		LEFT JOIN groups g ON g.id = d.group_id
+		ORDER BY d.created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var devices []*Device
+	for rows.Next() {
+		var dev Device
+		var userEmail, userDisplay, groupName string
+		if err := rows.Scan(
+			&dev.ID, &dev.UserID, &dev.GroupID, &dev.Name,
+			&dev.PublicKey, &dev.AssignedIP,
+			&dev.IsApproved, &dev.IsActive, &dev.AutoRenew, &dev.ConfigDownloaded,
+			&dev.CreatedAt, &dev.UpdatedAt, &dev.LastSeenAt,
+			&userEmail, &userDisplay, &groupName,
+		); err != nil {
+			return nil, err
+		}
+		dev.User = &User{ID: dev.UserID, Email: userEmail, DisplayName: userDisplay}
+		dev.Group = &Group{ID: dev.GroupID, Name: groupName}
+		devices = append(devices, &dev)
+	}
+	return devices, rows.Err()
+}
+
+func (d *DB) ListAllDevicesRaw(ctx context.Context) ([]*Device, error) {
 	rows, err := d.sql.QueryContext(ctx, deviceSelectSQL+` ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -339,12 +373,37 @@ func (d *DB) ListAllDevices(ctx context.Context) ([]*Device, error) {
 }
 
 func (d *DB) ListPendingDevices(ctx context.Context) ([]*Device, error) {
-	rows, err := d.sql.QueryContext(ctx, deviceSelectSQL+` WHERE is_approved = 0 ORDER BY created_at ASC`)
+	rows, err := d.sql.QueryContext(ctx, `
+		SELECT d.id, d.user_id, d.group_id, d.name, d.public_key, d.assigned_ip,
+		       d.is_approved, d.is_active, d.auto_renew, d.config_downloaded,
+		       d.created_at, d.updated_at, d.last_seen_at,
+		       u.email, u.display_name, g.name as group_name
+		FROM devices d
+		LEFT JOIN users u ON u.id = d.user_id
+		LEFT JOIN groups g ON g.id = d.group_id
+		WHERE d.is_approved = 0 ORDER BY d.created_at ASC`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	return scanDevices(rows)
+	var devices []*Device
+	for rows.Next() {
+		var dev Device
+		var userEmail, userDisplay, groupName string
+		if err := rows.Scan(
+			&dev.ID, &dev.UserID, &dev.GroupID, &dev.Name,
+			&dev.PublicKey, &dev.AssignedIP,
+			&dev.IsApproved, &dev.IsActive, &dev.AutoRenew, &dev.ConfigDownloaded,
+			&dev.CreatedAt, &dev.UpdatedAt, &dev.LastSeenAt,
+			&userEmail, &userDisplay, &groupName,
+		); err != nil {
+			return nil, err
+		}
+		dev.User = &User{ID: dev.UserID, Email: userEmail, DisplayName: userDisplay}
+		dev.Group = &Group{ID: dev.GroupID, Name: groupName}
+		devices = append(devices, &dev)
+	}
+	return devices, rows.Err()
 }
 
 func (d *DB) ListApprovedActiveDevices(ctx context.Context) ([]*Device, error) {
@@ -478,14 +537,21 @@ func (d *DB) CreateSession(ctx context.Context, deviceID string, expiresAt time.
 }
 
 func (d *DB) ExtendSession(ctx context.Context, id string, by time.Duration) (*Session, error) {
+	// Fetch current expiry, add duration in Go, write back as a proper time value.
+	// SQLite datetime() arithmetic fails with RFC3339 strings stored by Go's driver.
+	sess, err := d.GetSessionByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("extending session: getting session: %w", err)
+	}
+	newExpiry := sess.ExpiresAt.Add(by)
 	now := time.Now().UTC()
-	_, err := d.sql.ExecContext(ctx, `
+	_, err = d.sql.ExecContext(ctx, `
 		UPDATE sessions
-		SET expires_at      = datetime(expires_at, ?),
+		SET expires_at      = ?,
 		    extended_at     = ?,
 		    extension_count = extension_count + 1
 		WHERE id = ? AND status = 'active'
-	`, fmt.Sprintf("+%d seconds", int(by.Seconds())), now, id)
+	`, newExpiry, now, id)
 	if err != nil {
 		return nil, fmt.Errorf("extending session: %w", err)
 	}
@@ -514,16 +580,37 @@ func (d *DB) MarkExpiredSessions(ctx context.Context) (int64, error) {
 
 func (d *DB) ListActiveSessions(ctx context.Context) ([]*Session, error) {
 	rows, err := d.sql.QueryContext(ctx, `
-		SELECT id, device_id, authed_at, expires_at, extended_at,
-		       extension_count, revoked_at, revoked_by, ip_address, status
-		FROM sessions WHERE status = 'active' AND expires_at > ?
-		ORDER BY expires_at ASC
+		SELECT s.id, s.device_id, s.authed_at, s.expires_at, s.extended_at,
+		       s.extension_count, s.revoked_at, s.revoked_by, s.ip_address, s.status,
+		       d.name as device_name, u.email as user_email
+		FROM sessions s
+		LEFT JOIN devices d ON d.id = s.device_id
+		LEFT JOIN users u ON u.id = d.user_id
+		WHERE s.status = 'active' AND s.expires_at > ?
+		ORDER BY s.expires_at ASC
 	`, time.Now().UTC())
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	return scanSessions(rows)
+	var sessions []*Session
+	for rows.Next() {
+		var s Session
+		var deviceName, userEmail string
+		if err := rows.Scan(
+			&s.ID, &s.DeviceID, &s.AuthedAt, &s.ExpiresAt,
+			&s.ExtendedAt, &s.ExtensionCount,
+			&s.RevokedAt, &s.RevokedBy,
+			&s.IPAddress, &s.Status,
+			&deviceName, &userEmail,
+		); err != nil {
+			return nil, err
+		}
+		s.DeviceName = deviceName
+		s.UserEmail = userEmail
+		sessions = append(sessions, &s)
+	}
+	return sessions, rows.Err()
 }
 
 func scanSession(row *sql.Row) (*Session, error) {
@@ -540,22 +627,6 @@ func scanSession(row *sql.Row) (*Session, error) {
 	return &s, err
 }
 
-func scanSessions(rows *sql.Rows) ([]*Session, error) {
-	var sessions []*Session
-	for rows.Next() {
-		var s Session
-		if err := rows.Scan(
-			&s.ID, &s.DeviceID, &s.AuthedAt, &s.ExpiresAt,
-			&s.ExtendedAt, &s.ExtensionCount,
-			&s.RevokedAt, &s.RevokedBy,
-			&s.IPAddress, &s.Status,
-		); err != nil {
-			return nil, err
-		}
-		sessions = append(sessions, &s)
-	}
-	return sessions, rows.Err()
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Agents
@@ -709,8 +780,12 @@ func (d *DB) WriteAuditLog(ctx context.Context, entry *AuditLog) error {
 
 func (d *DB) ListAuditLog(ctx context.Context, limit int) ([]*AuditLog, error) {
 	rows, err := d.sql.QueryContext(ctx, `
-		SELECT id, user_id, device_id, agent_id, event, metadata, ip_address, created_at
-		FROM audit_log ORDER BY created_at DESC LIMIT ?
+		SELECT a.id, a.user_id, a.device_id, a.agent_id, a.event, a.metadata, a.ip_address, a.created_at,
+		       u.email as user_email, dev.name as device_name
+		FROM audit_log a
+		LEFT JOIN users u ON u.id = a.user_id
+		LEFT JOIN devices dev ON dev.id = a.device_id
+		ORDER BY a.created_at DESC LIMIT ?
 	`, limit)
 	if err != nil {
 		return nil, err
@@ -719,12 +794,16 @@ func (d *DB) ListAuditLog(ctx context.Context, limit int) ([]*AuditLog, error) {
 	var entries []*AuditLog
 	for rows.Next() {
 		var e AuditLog
+		var userEmail, deviceName string
 		if err := rows.Scan(
 			&e.ID, &e.UserID, &e.DeviceID, &e.AgentID,
 			&e.Event, &e.Metadata, &e.IPAddress, &e.CreatedAt,
+			&userEmail, &deviceName,
 		); err != nil {
 			return nil, err
 		}
+		e.UserEmail = userEmail
+		e.DeviceName = deviceName
 		entries = append(entries, &e)
 	}
 	return entries, rows.Err()

@@ -11,7 +11,7 @@ config.yaml
 *.db
 *.db-wal
 *.db-shm
-*.DS_Store
+.DS_Store
 
 # Runtime
 /data/

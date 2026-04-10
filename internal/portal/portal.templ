@@ -18,6 +18,7 @@ templ Layout(title string, session *SessionData) {
 		<link rel="preconnect" href="https://fonts.googleapis.com"/>
 		<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"/>
 		<script src="https://unpkg.com/htmx.org@2.0.0/dist/htmx.min.js" defer></script>
+		<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 		<link rel="stylesheet" href="/static/css/portal.css"/>
 	</head>
 	<body>
@@ -212,7 +213,8 @@ templ DeviceStatusBadge(dev *db.Device) {
 	} else if !dev.IsActive {
 		<span class="badge badge-error">Disabled</span>
 	} else if dev.ActiveSession != nil && dev.ActiveSession.IsActive() {
-		<span class="badge badge-success">
+		<span class="badge badge-success session-badge"
+			data-expires-at={ dev.ActiveSession.ExpiresAt.Format("2006-01-02T15:04:05Z") }>
 			Active · { formatDuration(dev.ActiveSession.TimeRemaining()) }
 		</span>
 	} else {
@@ -262,7 +264,8 @@ templ DeviceActions(dev *db.Device) {
 // SessionStatusFragment renders just the session status badge (for HTMX updates).
 templ SessionStatusFragment(session *db.Session) {
 	if session != nil && session.IsActive() {
-		<span class="badge badge-success">
+		<span class="badge badge-success session-badge"
+			data-expires-at={ session.ExpiresAt.Format("2006-01-02T15:04:05Z") }>
 			Active · { formatDuration(session.TimeRemaining()) }
 		</span>
 	} else {
@@ -359,29 +362,39 @@ templ ConfigDownloadPage(data ConfigDownloadData) {
 						href={ templ.SafeURL("data:text/plain;charset=utf-8," + urlEncode(data.ConfigFile)) }
 						download={ data.Device.Name + ".conf" }
 						class="btn btn-primary"
-						onclick="this.closest('.config-download').querySelector('.config-done').style.display='block'"
+						onclick="markDownloaded(this)"
 					>
 						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 							<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
 							<polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
 						</svg>
-						Download { data.Device.Name }.conf
+						Download .conf
 					</a>
-					<button
-						class="btn btn-outline"
-						onclick="copyConfig(this)"
-						data-config={ data.ConfigFile }
-					>
+					<button class="btn btn-outline" onclick="copyConfig(this)" data-config={ data.ConfigFile }>
 						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 							<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
 						</svg>
 						Copy
 					</button>
+					<button class="btn btn-outline" onclick="toggleQR(this)" data-config={ data.ConfigFile }>
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+							<rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="3" height="3"/>
+						</svg>
+						QR Code
+					</button>
+				</div>
+
+				<div id="qr-container" style="display:none;margin-bottom:20px;text-align:center">
+					<p style="font-size:13px;color:var(--text-2);margin-bottom:12px">
+						Scan with the WireGuard mobile app
+					</p>
+					<canvas id="qr-canvas" style="border-radius:8px"></canvas>
 				</div>
 
 				<div class="config-done" style="display:none">
 					<div class="alert alert-success">
-						Config downloaded. Your device is pending admin approval — you'll be notified when it's approved.
+						Config saved. Your device is pending admin approval — you'll be notified when it's approved.
 					</div>
 					<a href="/" class="btn btn-ghost">Back to dashboard</a>
 				</div>

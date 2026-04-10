@@ -88,22 +88,22 @@ templ navItem(href, key, activeNav, label string) {
 templ AdminDashboardPage(data AdminDashboardData) {
 	@AdminLayout("Dashboard", data.Session, "dashboard") {
 		<div class="stats-grid">
-			<div class="stat-card card">
+			<a href="/devices?filter=pending" class="stat-card card" style="text-decoration:none;cursor:pointer">
 				<div class="stat-label">Pending Approvals</div>
 				<div class="stat-value stat-warning">{ itoa(len(data.PendingDevices)) }</div>
-			</div>
-			<div class="stat-card card">
+			</a>
+			<a href="/sessions" class="stat-card card" style="text-decoration:none;cursor:pointer">
 				<div class="stat-label">Active Sessions</div>
 				<div class="stat-value stat-success">{ itoa(len(data.ActiveSessions)) }</div>
-			</div>
-			<div class="stat-card card">
+			</a>
+			<a href="/agents" class="stat-card card" style="text-decoration:none;cursor:pointer">
 				<div class="stat-label">Connected Agents</div>
 				<div class="stat-value">{ itoa(data.WSCounts[ws.KindAgent]) }</div>
-			</div>
-			<div class="stat-card card">
+			</a>
+			<a href="/audit" class="stat-card card" style="text-decoration:none;cursor:pointer">
 				<div class="stat-label">Users Online</div>
 				<div class="stat-value">{ itoa(data.WSCounts[ws.KindPublic]) }</div>
-			</div>
+			</a>
 		</div>
 
 		if len(data.PendingDevices) > 0 {
@@ -119,11 +119,22 @@ templ AdminDashboardPage(data AdminDashboardData) {
 			<h2>Active Sessions</h2>
 			<div class="table-wrap card">
 				<table class="table">
-					<thead><tr><th>Device</th><th>IP</th><th>Expires</th><th>Actions</th></tr></thead>
+					<thead><tr><th>Device</th><th>User</th><th>IP</th><th>Expires</th><th>Actions</th></tr></thead>
 					<tbody>
 						for _, s := range data.ActiveSessions {
 							<tr id={ "session-" + s.ID }>
-								<td>{ s.DeviceID }</td>
+								<td>
+									if s.DeviceName != "" {
+										{ s.DeviceName }
+									} else {
+										{ s.DeviceID[:8] }…
+									}
+								</td>
+								<td class="text-muted">
+									if s.UserEmail != "" {
+										{ s.UserEmail }
+									}
+								</td>
 								<td class="text-muted">{ s.IPAddress }</td>
 								<td>{ s.ExpiresAt.Format("02 Jan 15:04") }</td>
 								<td>
@@ -147,11 +158,23 @@ templ AdminDashboardPage(data AdminDashboardData) {
 templ PendingDevicesTable(devices []*db.Device) {
 	<div class="table-wrap card">
 		<table class="table">
-			<thead><tr><th>Device</th><th>Requested</th><th>Actions</th></tr></thead>
+			<thead><tr><th>Device</th><th>User</th><th>Group</th><th>Requested</th><th>Actions</th></tr></thead>
 			<tbody>
 				for _, dev := range devices {
 					<tr id={ "pending-" + dev.ID }>
 						<td class="font-medium">{ dev.Name }</td>
+						<td class="text-muted">
+							if dev.User != nil && dev.User.Email != "" {
+								{ dev.User.Email }
+							} else {
+								{ dev.UserID[:8] }…
+							}
+						</td>
+						<td class="text-muted">
+							if dev.Group != nil && dev.Group.Name != "" {
+								{ dev.Group.Name }
+							}
+						</td>
 						<td class="text-muted">{ dev.CreatedAt.Format("02 Jan 15:04") }</td>
 						<td class="table-actions">
 							<button
@@ -254,13 +277,38 @@ templ AdminAuditPage(data AdminAuditData) {
 	@AdminLayout("Audit Log", data.Session, "audit") {
 		<div class="table-wrap card">
 			<table class="table table-sm">
-				<thead><tr><th>Time</th><th>Event</th><th>IP</th></tr></thead>
+				<thead>
+					<tr><th>Time</th><th>Event</th><th>User</th><th>Device</th><th>IP</th><th>Detail</th></tr>
+				</thead>
 				<tbody>
 					for _, entry := range data.Entries {
 						<tr>
-							<td class="text-muted text-sm">{ entry.CreatedAt.Format("02 Jan 15:04:05") }</td>
-							<td><span class={ "event-badge", eventClass(entry.Event) }>{ entry.Event }</span></td>
+							<td class="text-muted text-sm" style="white-space:nowrap">{ entry.CreatedAt.Format("02 Jan 15:04:05") }</td>
+							<td><span class={ "event-badge", eventClass(entry.Event) }>{ humanEvent(entry.Event) }</span></td>
+							<td class="text-muted text-sm">
+								if entry.UserEmail != "" {
+									{ entry.UserEmail }
+								} else if entry.UserID.Valid {
+									{ entry.UserID.String[:8] }…
+								} else {
+									—
+								}
+							</td>
+							<td class="text-muted text-sm">
+								if entry.DeviceName != "" {
+									{ entry.DeviceName }
+								} else if entry.DeviceID.Valid {
+									{ entry.DeviceID.String[:8] }…
+								} else {
+									—
+								}
+							</td>
 							<td class="text-muted text-sm">{ entry.IPAddress }</td>
+							<td class="text-muted text-sm" style="max-width:200px;overflow:hidden;text-overflow:ellipsis">
+								if entry.Metadata != "" && entry.Metadata != "{}" {
+									{ entry.Metadata }
+								}
+							</td>
 						</tr>
 					}
 				</tbody>
@@ -339,8 +387,20 @@ templ AdminDevicesPage(data AdminDevicesData) {
 templ DeviceRow(dev *db.Device) {
 	<tr id={ "dev-" + dev.ID }>
 		<td class="font-medium">{ dev.Name }</td>
-		<td class="text-muted">{ dev.UserID }</td>
-		<td class="text-muted">{ dev.GroupID }</td>
+		<td class="text-muted">
+			if dev.User != nil && dev.User.Email != "" {
+				{ dev.User.Email }
+			} else {
+				{ dev.UserID[:8] }…
+			}
+		</td>
+		<td class="text-muted">
+			if dev.Group != nil && dev.Group.Name != "" {
+				{ dev.Group.Name }
+			} else {
+				{ dev.GroupID[:8] }…
+			}
+		</td>
 		<td><code>{ dev.AssignedIP }</code></td>
 		<td>
 			if !dev.IsApproved {
@@ -395,7 +455,18 @@ templ AdminSessionsPage(data AdminSessionsData) {
 				<tbody id="sessions-table">
 					for _, s := range data.Sessions {
 						<tr id={ "session-row-" + s.ID }>
-							<td class="font-medium">{ s.DeviceID }</td>
+							<td class="font-medium">
+								if s.DeviceName != "" {
+									{ s.DeviceName }
+								} else {
+									{ s.DeviceID[:8] }…
+								}
+							</td>
+							<td class="text-muted">
+								if s.UserEmail != "" {
+									{ s.UserEmail }
+								}
+							</td>
 							<td class="text-muted">{ s.IPAddress }</td>
 							<td class="text-muted">{ s.AuthedAt.Format("02 Jan 15:04") }</td>
 							<td>{ s.ExpiresAt.Format("02 Jan 15:04") }</td>

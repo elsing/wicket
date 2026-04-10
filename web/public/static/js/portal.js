@@ -25,78 +25,98 @@ function copyConfig(btn) {
   }).catch(() => alert('Could not copy — please select and copy manually.'));
 }
 
-// ── Countdown timers ──────────────────────────────────────────────────────────
+// ── Live countdown timers ─────────────────────────────────────────────────────
+// Run a single interval that updates all active session badges every second.
 function startCountdowns() {
-  document.querySelectorAll('[data-expires-at]').forEach(el => {
-    updateCountdown(el, new Date(el.dataset.expiresAt));
-  });
+  // Clear any existing interval
+  if (window._countdownInterval) clearInterval(window._countdownInterval);
+  
+  window._countdownInterval = setInterval(() => {
+    document.querySelectorAll('.session-badge[data-expires-at]').forEach(el => {
+      const expiresAt = new Date(el.dataset.expiresAt);
+      const remaining = expiresAt - Date.now();
+      if (remaining <= 0) {
+        el.textContent = 'Session expired';
+        el.className = el.className.replace('badge-success', 'badge-error');
+        el.removeAttribute('data-expires-at');
+        refreshDeviceList();
+      } else {
+        const h = Math.floor(remaining / 3600000);
+        const m = Math.floor((remaining % 3600000) / 60000);
+        const s = Math.floor((remaining % 60000) / 1000);
+        if (h > 0) {
+          el.textContent = `Active · ${h}h ${m}m`;
+          el.style.color = '';
+          el.style.background = '';
+        } else if (m >= 5) {
+          el.textContent = `Active · ${m}m`;
+          el.style.color = '';
+          el.style.background = '';
+        } else if (m > 0) {
+          el.textContent = `Active · ${m}m ${s}s`;
+          // Orange warning under 5 minutes
+          el.style.background = 'var(--warning-light)';
+          el.style.color = 'var(--warning-text)';
+        } else {
+          el.textContent = `Active · ${s}s`;
+          // Red under 1 minute
+          el.style.background = 'var(--error-light)';
+          el.style.color = 'var(--error-text)';
+        }
+      }
+    });
+  }, 1000);
 }
 
-function updateCountdown(el, expiresAt) {
-  const update = () => {
-    const remaining = expiresAt - Date.now();
-    if (remaining <= 0) {
-      el.textContent = 'Expired';
-      el.className = el.className.replace('badge-success', 'badge-muted');
-      return;
-    }
-    const h = Math.floor(remaining / 3600000);
-    const m = Math.floor((remaining % 3600000) / 60000);
-    el.textContent = h > 0 ? `Active · ${h}h ${m}m` : `Active · ${m}m`;
-  };
-  update();
-  const interval = setInterval(() => {
-    if (!document.contains(el)) { clearInterval(interval); return; }
-    update();
-  }, 60000);
+function refreshDeviceList() {
+  htmx.ajax('GET', '/', { target: '#device-list', swap: 'innerHTML', select: '#device-list' });
 }
 
-// ── WebSocket live updates ────────────────────────────────────────────────────
+// ── WebSocket ─────────────────────────────────────────────────────────────────
 let ws = null;
-let wsReconnectTimer = null;
 
 function connectWS() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(`${proto}//${location.host}/ws`);
 
-  ws.onopen = () => {
-    console.log('[wicket] WS connected');
-  };
+  ws.onopen = () => console.log('[wicket] WS connected');
 
   ws.onmessage = (evt) => {
     try {
       const event = JSON.parse(evt.data);
       handleServerEvent(event);
-    } catch (e) { /* not JSON */ }
+    } catch (e) {}
   };
 
   ws.onclose = () => {
-    console.log('[wicket] WS disconnected, reconnecting in 5s...');
-    wsReconnectTimer = setTimeout(connectWS, 5000);
+    console.log('[wicket] WS disconnected, reconnecting...');
+    setTimeout(connectWS, 5000);
   };
 
-  ws.onerror = () => {
-    ws.close();
-  };
+  ws.onerror = () => ws.close();
 }
 
 function handleServerEvent(event) {
-  console.log('[wicket] event:', event.type, event);
+  console.log('[wicket] event:', event.type);
   switch (event.type) {
     case 'device.approved':
-      htmx.ajax('GET', '/', { target: '#device-list', swap: 'innerHTML', select: '#device-list' });
-      showToast('Your device has been approved!', 'success');
+      refreshDeviceList();
+      showToast('Your device has been approved — you can now activate it', 'success');
       break;
     case 'device.rejected':
-      htmx.ajax('GET', '/', { target: '#device-list', swap: 'innerHTML', select: '#device-list' });
-      showToast('A device request was rejected.', 'warning');
+      refreshDeviceList();
+      showToast('A device was removed', 'warning');
       break;
+    case 'session.created':
     case 'session.expired':
     case 'session.revoked':
-      htmx.ajax('GET', '/', { target: '#device-list', swap: 'innerHTML', select: '#device-list' });
+      refreshDeviceList();
       break;
     case 'peer.added':
-      showToast('VPN session is now active', 'success');
+      showToast('VPN session active — tunnel is up', 'success');
+      break;
+    case 'peer.removed':
+      refreshDeviceList();
       break;
   }
 }
@@ -119,19 +139,58 @@ function showToast(message, type = 'info') {
     background: c.bg, color: c.color,
     boxShadow: '0 8px 24px rgba(0,0,0,.15)',
     zIndex: '1000', maxWidth: '360px',
-    animation: 'slideUp 0.25s ease',
   });
   document.body.appendChild(toast);
   setTimeout(() => {
     toast.style.opacity = '0';
     toast.style.transition = 'opacity 0.3s';
     setTimeout(() => toast.remove(), 300);
-  }, 4000);
+  }, 5000);
+}
+
+// ── QR Code ───────────────────────────────────────────────────────────────────
+// Uses qrcodejs loaded from CDN (added in template head)
+function toggleQR(btn) {
+  const container = document.getElementById('qr-container');
+  if (container.style.display !== 'none') {
+    container.style.display = 'none';
+    return;
+  }
+
+  const config = btn.dataset.config;
+  const canvas = document.getElementById('qr-canvas');
+
+  // Use qrcode.js library to render to canvas
+  if (typeof QRCode === 'undefined') {
+    // Fallback: encode as data URI and use img src via server
+    container.innerHTML = '<p style="color:var(--error-text)">QR library not loaded</p>';
+    container.style.display = 'block';
+    return;
+  }
+
+  canvas.innerHTML = '';
+  new QRCode(canvas, {
+    text: config,
+    width: 220,
+    height: 220,
+    colorDark: '#000000',
+    colorLight: '#ffffff',
+    correctLevel: QRCode.CorrectLevel.M,
+  });
+  container.style.display = 'block';
+}
+
+function markDownloaded(link) {
+  setTimeout(() => {
+    const done = link.closest('.config-download').querySelector('.config-done');
+    if (done) done.style.display = 'block';
+  }, 500);
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   startCountdowns();
+  // Restart countdowns after any HTMX swap (new badges may have appeared)
   document.body.addEventListener('htmx:afterSwap', startCountdowns);
   connectWS();
 });

@@ -2,6 +2,7 @@ package portal
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -10,6 +11,8 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/httprate"
 	"go.uber.org/zap"
+
+	qrcode "github.com/skip2/go-qrcode"
 
 	"github.com/wicket-vpn/wicket/internal/config"
 	"github.com/wicket-vpn/wicket/internal/core"
@@ -80,6 +83,7 @@ func NewHandler(
 		r.Post("/devices", h.handleCreateDevice)
 		r.Post("/devices/{deviceID}/auto-renew", h.handleSetAutoRenew)
 		r.Delete("/devices/{deviceID}", h.handleDeleteDevice)
+		r.Get("/devices/{deviceID}/qr", h.handleDeviceQR)
 
 		r.Post("/sessions", h.handleActivateSession)
 		r.Post("/sessions/group/{groupID}", h.handleActivateGroupSessions)
@@ -310,6 +314,34 @@ func (h *Handler) handleSetAutoRenew(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+func (h *Handler) handleDeviceQR(w http.ResponseWriter, r *http.Request) {
+	session := SessionFromContext(r.Context())
+	_ = session
+
+	configB64 := r.URL.Query().Get("c")
+	if configB64 == "" {
+		http.Error(w, "no config provided", http.StatusBadRequest)
+		return
+	}
+
+	configBytes, err := base64.RawURLEncoding.DecodeString(configB64)
+	if err != nil {
+		http.Error(w, "invalid config", http.StatusBadRequest)
+		return
+	}
+
+	png, err := qrcode.Encode(string(configBytes), qrcode.Medium, 256)
+	if err != nil {
+		h.log.Error("generating QR code", zap.Error(err))
+		http.Error(w, "qr generation failed", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Write(png) //nolint:errcheck
+}
+
 func (h *Handler) handleDeleteDevice(w http.ResponseWriter, r *http.Request) {
 	session := SessionFromContext(r.Context())
 	deviceID := chi.URLParam(r, "deviceID")
@@ -420,5 +452,3 @@ func clientIP(r *http.Request) string {
 	}
 	return r.RemoteAddr
 }
-
-

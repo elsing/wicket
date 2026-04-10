@@ -67,14 +67,14 @@ type DeviceSubnet struct {
 // User represents a person who has logged in via OIDC.
 // Created automatically on first login.
 type User struct {
-	ID          string    `db:"id"`
-	OIDCSub     string    `db:"oidc_sub"`     // stable OIDC subject — primary identifier
-	Email       string    `db:"email"`
-	DisplayName string    `db:"display_name"`
-	IsAdmin     bool      `db:"is_admin"`
-	IsActive    bool      `db:"is_active"`
-	CreatedAt   time.Time `db:"created_at"`
-	UpdatedAt   time.Time `db:"updated_at"`
+	ID          string       `db:"id"`
+	OIDCSub     string       `db:"oidc_sub"` // stable OIDC subject — primary identifier
+	Email       string       `db:"email"`
+	DisplayName string       `db:"display_name"`
+	IsAdmin     bool         `db:"is_admin"`
+	IsActive    bool         `db:"is_active"`
+	CreatedAt   time.Time    `db:"created_at"`
+	UpdatedAt   time.Time    `db:"updated_at"`
 	LastLoginAt sql.NullTime `db:"last_login_at"`
 
 	// Populated by joins.
@@ -106,8 +106,8 @@ type Device struct {
 	PublicKey        string       `db:"public_key"`
 	AssignedIP       string       `db:"assigned_ip"`
 	IsApproved       bool         `db:"is_approved"`
-	IsActive         bool         `db:"is_active"`        // admin-level toggle
-	AutoRenew        bool         `db:"auto_renew"`       // activate session on portal login
+	IsActive         bool         `db:"is_active"`         // admin-level toggle
+	AutoRenew        bool         `db:"auto_renew"`        // activate session on portal login
 	ConfigDownloaded bool         `db:"config_downloaded"` // one-time download guard
 	CreatedAt        time.Time    `db:"created_at"`
 	UpdatedAt        time.Time    `db:"updated_at"`
@@ -129,6 +129,8 @@ type Device struct {
 type Session struct {
 	ID             string         `db:"id"`
 	DeviceID       string         `db:"device_id"`
+	DeviceName     string         `db:"-"` // populated by join queries
+	UserEmail      string         `db:"-"` // populated by join queries
 	AuthedAt       time.Time      `db:"authed_at"`
 	ExpiresAt      time.Time      `db:"expires_at"`
 	ExtendedAt     sql.NullTime   `db:"extended_at"`
@@ -174,7 +176,7 @@ type Agent struct {
 	ID          string       `db:"id"`
 	Name        string       `db:"name"`
 	Description string       `db:"description"`
-	TokenHash   string       `db:"token"`      // bcrypt hashed agent token
+	TokenHash   string       `db:"token"` // bcrypt hashed agent token
 	IsActive    bool         `db:"is_active"`
 	LastSeenAt  sql.NullTime `db:"last_seen_at"`
 	CreatedAt   time.Time    `db:"created_at"`
@@ -206,20 +208,22 @@ type MetricSnapshot struct {
 // AuditLog is an append-only record of system events.
 // Rows are never updated or deleted.
 type AuditLog struct {
-	ID        string         `db:"id"`
-	UserID    sql.NullString `db:"user_id"`
-	DeviceID  sql.NullString `db:"device_id"`
-	AgentID   sql.NullString `db:"agent_id"`
-	Event     string         `db:"event"`
-	Metadata  string         `db:"metadata"`   // JSON blob
-	IPAddress string         `db:"ip_address"`
-	CreatedAt time.Time      `db:"created_at"`
+	ID         string         `db:"id"`
+	UserID     sql.NullString `db:"user_id"`
+	DeviceID   sql.NullString `db:"device_id"`
+	AgentID    sql.NullString `db:"agent_id"`
+	Event      string         `db:"event"`
+	Metadata   string         `db:"metadata"` // JSON blob
+	IPAddress  string         `db:"ip_address"`
+	CreatedAt  time.Time      `db:"created_at"`
+	UserEmail  string         `db:"-"` // populated by join queries
+	DeviceName string         `db:"-"` // populated by join queries
 }
 
 // Audit event constants. Format: "entity.action"
 const (
-	AuditEventUserLogin    = "user.login"
-	AuditEventUserCreated  = "user.created"
+	AuditEventUserLogin   = "user.login"
+	AuditEventUserCreated = "user.created"
 
 	AuditEventDeviceCreated  = "device.created"
 	AuditEventDeviceApproved = "device.approved"

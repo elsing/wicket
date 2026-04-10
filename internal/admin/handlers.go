@@ -13,6 +13,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/wicket-vpn/wicket/internal/config"
+	"github.com/wicket-vpn/wicket/internal/db"
 	"github.com/wicket-vpn/wicket/internal/core"
 	"github.com/wicket-vpn/wicket/internal/oidc"
 	"github.com/wicket-vpn/wicket/internal/portal"
@@ -88,6 +89,7 @@ func NewHandler(
 		r.Delete("/devices/{deviceID}", h.handleDeleteDevice)
 
 		r.Get("/sessions", h.handleSessions)
+		r.Post("/sessions/admin-activate/{deviceID}", h.handleAdminActivateSession)
 		r.Post("/sessions/{sessionID}/revoke", h.handleRevokeSession)
 		r.Post("/sessions/{sessionID}/extend", h.handleExtendSession)
 
@@ -200,6 +202,7 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request) {
 
 	http.Redirect(w, r, "/", http.StatusFound)
 }
+
 
 func (h *Handler) handleLocalLogin(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
@@ -330,7 +333,43 @@ func (h *Handler) handleEnableDevice(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleSessions(w http.ResponseWriter, r *http.Request) {
 	sess := portal.SessionFromContext(r.Context())
 	sessions, _ := h.svc.DB().ListActiveSessions(r.Context())
-	renderAdminSessions(w, r, AdminSessionsData{Session: sess, Sessions: sessions})
+
+	// Find approved+active devices that have no current session
+	allDevices, _ := h.svc.DB().ListAllDevices(r.Context())
+	activeDeviceIDs := make(map[string]bool)
+	for _, s := range sessions {
+		activeDeviceIDs[s.DeviceID] = true
+	}
+	var inactiveApproved []*db.Device
+	for _, dev := range allDevices {
+		if dev.IsApproved && dev.IsActive && !activeDeviceIDs[dev.ID] {
+			inactiveApproved = append(inactiveApproved, dev)
+		}
+	}
+
+	renderAdminSessions(w, r, AdminSessionsData{
+		Session:         sess,
+		Sessions:        sessions,
+		ApprovedDevices: inactiveApproved,
+	})
+}
+
+func (h *Handler) handleAdminActivateSession(w http.ResponseWriter, r *http.Request) {
+	sess := portal.SessionFromContext(r.Context())
+	deviceID := chi.URLParam(r, "deviceID")
+
+	dev, err := h.svc.DB().GetDeviceByID(r.Context(), deviceID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	if _, err := h.svc.ActivateSession(r.Context(), deviceID, dev.UserID, sess.UserID+" (admin)"); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 }
 
 func (h *Handler) handleRevokeSession(w http.ResponseWriter, r *http.Request) {

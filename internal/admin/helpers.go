@@ -1,5 +1,7 @@
 package admin
 
+import "time"
+
 // firstChar returns the first character of a string, uppercased, for avatars.
 func firstChar(s string) string {
 	for _, r := range s {
@@ -53,4 +55,37 @@ func groupHasSubnet(groupID, subnetID string, groupSubnets map[string][]string) 
 		}
 	}
 	return false
+}
+
+// humanEvent converts an event key like "device.approved" to "Device Approved".
+func humanEvent(event string) string {
+	m := map[string]string{
+		"device.created":   "Device Created",
+		"device.approved":  "Device Approved",
+		"device.rejected":  "Device Rejected",
+		"device.disabled":  "Device Disabled",
+		"device.enabled":   "Device Enabled",
+		"session.created":  "Session Started",
+		"session.extended": "Session Extended",
+		"session.revoked":  "Session Revoked",
+		"session.expired":  "Session Expired",
+		"peer.added":       "Peer Added",
+		"peer.removed":     "Peer Removed",
+		"user.login":       "User Login",
+		"user.admin.grant": "Admin Granted",
+	}
+	if h, ok := m[event]; ok {
+		return h
+	}
+	return event
+}
+
+// expiryIsUrgent returns true when a session expires in < 30 minutes.
+func expiryIsUrgent(t time.Time) bool {
+	return time.Until(t) < 30*time.Minute
+}
+
+// expiryIsWarning returns true when a session expires in < 2 hours.
+func expiryIsWarning(t time.Time) bool {
+	return time.Until(t) < 2*time.Hour
 }

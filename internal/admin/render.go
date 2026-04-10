@@ -65,7 +65,7 @@ func renderAdminAgents(w http.ResponseWriter, r *http.Request, data AdminAgentsD
 	AdminAgentsPage(data).Render(r.Context(), w) //nolint:errcheck
 }
 
-func renderAgentToken(w http.ResponseWriter, r *http.Request, agent *db.Agent, token string) {
+func renderAgentToken(w http.ResponseWriter, _ *http.Request, agent *db.Agent, token string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write([]byte( //nolint:errcheck
 		`<div class="alert alert-warning">` +

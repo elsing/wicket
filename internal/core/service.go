@@ -227,10 +227,18 @@ func (s *Service) buildClientConfig(ctx context.Context, dev *db.Device, private
 	// and other peers, even if no explicit subnets are configured.
 	if len(allowedIPs) == 0 {
 		// No subnets configured — route the entire VPN range as a minimum.
-		// The admin can add specific subnets to the group to narrow this down.
 		_, vpnNet, err := net.ParseCIDR(s.cfg.WireGuard.Address)
 		if err == nil {
 			allowedIPs = append(allowedIPs, vpnNet.String())
+		}
+	}
+
+	// If 0.0.0.0/0 is present (full-tunnel mode), also add ::/0 so IPv6 routes
+	// through the tunnel too, preventing IPv6 leaks.
+	for _, ip := range allowedIPs {
+		if ip == "0.0.0.0/0" {
+			allowedIPs = append(allowedIPs, "::/0")
+			break
 		}
 	}
 
@@ -379,6 +387,7 @@ func (s *Service) DeleteDevice(ctx context.Context, deviceID, actorUserID string
 	}
 
 	s.log.Info("device deleted", zap.String("device", dev.Name), zap.String("actor", actorUserID))
+	s.emit(Event{Type: EventDeviceRejected, DeviceID: deviceID, UserID: dev.UserID})
 	return nil
 }
 

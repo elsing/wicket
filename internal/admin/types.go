@@ -20,8 +20,9 @@ type AdminDevicesData struct {
 }
 
 type AdminSessionsData struct {
-	Session  *portal.SessionData
-	Sessions []*db.Session
+	Session        *portal.SessionData
+	Sessions       []*db.Session
+	ApprovedDevices []*db.Device // approved devices with no active session
 }
 
 type AdminUsersData struct {
