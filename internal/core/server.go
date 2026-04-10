@@ -41,6 +41,14 @@ func New(cfg *config.Config, log *zap.Logger) (*Server, error) {
 	log.Info("database ready", zap.String("path", cfg.DB.Path))
 
 	// ── WireGuard ─────────────────────────────────────────────────────────────
+	// Ensure the WireGuard interface exists with the correct address before
+	// the peer manager connects to it. This means the server is self-healing —
+	// if the interface is missing or has the wrong address (e.g. after a config
+	// change), it fixes itself on startup without needing entrypoint changes.
+	if err := wireguard.EnsureInterface(cfg.WireGuard.Interface, cfg.WireGuard.Address, log); err != nil {
+		return nil, fmt.Errorf("setting up WireGuard interface: %w", err)
+	}
+
 	pm, err := wireguard.NewLocalPeerManager(cfg.WireGuard.Interface)
 	if err != nil {
 		return nil, fmt.Errorf("initialising WireGuard peer manager: %w", err)
@@ -124,7 +132,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.log.Info("CLI socket listening", zap.String("path", s.cfg.Server.SocketPath))
 
 	publicErrCh := make(chan error, 1)
-	adminErrCh := make(chan error, 1)
+	adminErrCh  := make(chan error, 1)
 
 	go func() {
 		s.log.Info("public portal listening", zap.String("addr", s.cfg.Public.BindAddr))

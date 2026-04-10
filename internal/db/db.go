@@ -22,8 +22,12 @@ type DB struct {
 // Open opens (or creates) the SQLite database at path, applies all pending
 // migrations, and returns a ready-to-use DB.
 func Open(path string) (*DB, error) {
+	// WAL mode allows concurrent readers with one writer.
+	// _busy_timeout=15000: wait up to 15s for locks before returning SQLITE_BUSY.
+	// _synchronous=NORMAL: safe with WAL, faster than FULL.
+	// _txlock=immediate: grab write lock immediately on BEGIN to avoid deadlocks.
 	dsn := fmt.Sprintf(
-		"file:%s?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=10000&_synchronous=NORMAL&_cache_size=1000",
+		"file:%s?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=15000&_synchronous=NORMAL&_txlock=immediate",
 		path,
 	)
 
@@ -32,8 +36,11 @@ func Open(path string) (*DB, error) {
 		return nil, fmt.Errorf("opening sqlite: %w", err)
 	}
 
-	// SQLite performs best with a single writer connection.
-	sqlDB.SetMaxOpenConns(1)
+	// WAL mode supports multiple concurrent readers.
+	// Allow up to 4 open connections: typically 1 writer + a few readers.
+	// The busy_timeout handles the case where a writer is already active.
+	sqlDB.SetMaxOpenConns(4)
+	sqlDB.SetMaxIdleConns(4)
 
 	if err := sqlDB.Ping(); err != nil {
 		return nil, fmt.Errorf("pinging sqlite: %w", err)
@@ -58,7 +65,6 @@ func (d *DB) Ping() error { return d.sql.Ping() }
 // runMigrations applies .up.sql files from the embedded migrations directory
 // that have not yet been applied. Tracks state in a schema_migrations table.
 func runMigrations(db *sql.DB) error {
-	// Ensure the migrations tracking table exists.
 	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
 		version TEXT NOT NULL PRIMARY KEY,
 		applied_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -67,7 +73,6 @@ func runMigrations(db *sql.DB) error {
 		return fmt.Errorf("creating schema_migrations table: %w", err)
 	}
 
-	// Read all .up.sql files, sorted by name.
 	entries, err := fs.ReadDir(migrationsFS, "migrations")
 	if err != nil {
 		return fmt.Errorf("reading migrations directory: %w", err)
@@ -82,16 +87,14 @@ func runMigrations(db *sql.DB) error {
 	sort.Strings(upFiles)
 
 	for _, name := range upFiles {
-		// Check if already applied.
 		var count int
 		if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version = ?`, name).Scan(&count); err != nil {
 			return fmt.Errorf("checking migration %s: %w", name, err)
 		}
 		if count > 0 {
-			continue // already applied
+			continue
 		}
 
-		// Read and execute the migration.
 		content, err := migrationsFS.ReadFile("migrations/" + name)
 		if err != nil {
 			return fmt.Errorf("reading migration %s: %w", name, err)
@@ -101,7 +104,6 @@ func runMigrations(db *sql.DB) error {
 			return fmt.Errorf("applying migration %s: %w", name, err)
 		}
 
-		// Record as applied.
 		if _, err := db.Exec(`INSERT INTO schema_migrations (version) VALUES (?)`, name); err != nil {
 			return fmt.Errorf("recording migration %s: %w", name, err)
 		}

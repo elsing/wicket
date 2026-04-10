@@ -40,7 +40,8 @@ func dispatchSocketCommand(conn net.Conn, svc *Service, log *zap.Logger) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// 60s timeout — some commands (e.g. OIDC discovery on startup) are slow
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	log.Info("CLI command received", zap.String("command", req.Command))
@@ -49,7 +50,7 @@ func dispatchSocketCommand(conn net.Conn, svc *Service, log *zap.Logger) {
 
 	// ── Health ────────────────────────────────────────────────────────────
 	case "health":
-		status := svc.Health(time.Time{}) // reconciler last run not available here
+		status := svc.Health(svc.ReconcilerLastRun())
 		respond(SocketResponse{OK: true, Data: status})
 
 	// ── Sessions ─────────────────────────────────────────────────────────
