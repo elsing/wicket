@@ -14,92 +14,111 @@ function toggleTheme() {
 }
 
 // ── Refresh helpers ───────────────────────────────────────────────────────────
-function refreshPending() {
-  if (document.getElementById('pending-devices'))
+// Each function checks which elements exist on the current page and refreshes
+// whatever is relevant. The admin may be on dashboard, devices, sessions etc.
+
+function refreshAfterDeviceChange() {
+  // Dashboard: refresh pending approvals panel
+  if (document.getElementById('pending-devices')) {
     htmx.ajax('GET', '/devices/pending', { target: '#pending-devices', swap: 'innerHTML' });
-}
-
-function refreshDevicesTable() {
-  if (document.getElementById('devices-tbody'))
+  }
+  // Devices page: refresh the full table body
+  if (document.getElementById('devices-tbody')) {
     htmx.ajax('GET', '/devices', { target: '#devices-tbody', swap: 'innerHTML' });
+  }
 }
 
-function refreshSessions() {
-  if (document.getElementById('sessions-table'))
+function refreshAfterSessionChange() {
+  if (document.getElementById('sessions-table')) {
     htmx.ajax('GET', '/sessions', { target: '#sessions-table', swap: 'innerHTML' });
+  }
 }
 
 // ── WebSocket ─────────────────────────────────────────────────────────────────
 let ws = null;
+let wsReconnectTimer = null;
 
 function connectWS() {
+  if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
+
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(`${proto}//${location.host}/ws`);
+  const url = `${proto}//${location.host}/ws`;
+  console.log('[wicket admin] connecting WS:', url);
+  ws = new WebSocket(url);
 
   ws.onopen = () => {
     console.log('[wicket admin] WS connected');
-    const dot = document.querySelector('.live-dot');
-    if (dot) dot.style.background = 'var(--success)';
+    document.querySelectorAll('.live-dot').forEach(d => d.style.background = 'var(--success)');
   };
 
   ws.onmessage = (evt) => {
-    try { handleEvent(JSON.parse(evt.data)); } catch(e) {}
+    try {
+      const event = JSON.parse(evt.data);
+      console.log('[wicket admin] event:', event.type, event);
+      handleEvent(event);
+    } catch(e) { console.warn('[wicket admin] bad WS message', evt.data); }
   };
 
-  ws.onclose = () => {
-    const dot = document.querySelector('.live-dot');
-    if (dot) dot.style.background = 'var(--error)';
-    console.log('[wicket admin] WS disconnected, reconnecting...');
-    setTimeout(connectWS, 5000);
+  // Send a ping from client every 25s to keep connection alive through
+  // browser tab throttling and proxy idle timeouts.
+  let keepaliveInterval = null;
+
+  ws.onopen = (ws.onopen || function(){}).bind(ws);
+  const _onopen = ws.onopen;
+
+  ws.addEventListener('open', () => {
+    if (keepaliveInterval) clearInterval(keepaliveInterval);
+    keepaliveInterval = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({type: 'ping'}));
+      }
+    }, 25000);
+  });
+
+  ws.onclose = (e) => {
+    console.log('[wicket admin] WS closed', e.code, e.reason, '— reconnecting in 5s');
+    document.querySelectorAll('.live-dot').forEach(d => d.style.background = 'var(--error)');
+    if (keepaliveInterval) { clearInterval(keepaliveInterval); keepaliveInterval = null; }
+    wsReconnectTimer = setTimeout(connectWS, 5000);
   };
 
-  ws.onerror = () => ws.close();
+  ws.onerror = (e) => {
+    console.warn('[wicket admin] WS error', e);
+    ws.close();
+  };
 }
 
 function handleEvent(event) {
-  console.log('[wicket admin]', event.type, event);
   switch (event.type) {
     case 'device.created':
-      refreshPending();
-      refreshDevicesTable();
+      refreshAfterDeviceChange();
       showToast('New device pending approval', 'warning');
       break;
     case 'device.approved':
-      refreshPending();
-      refreshDevicesTable();
+      refreshAfterDeviceChange();
       showToast('Device approved', 'success');
       break;
     case 'device.rejected':
-      refreshPending();
-      refreshDevicesTable();
+      refreshAfterDeviceChange();
       break;
     case 'session.created':
-      refreshSessions();
-      showToast('Session activated', 'success');
+      refreshAfterSessionChange();
       break;
     case 'session.revoked':
     case 'session.expired':
-      refreshSessions();
+      refreshAfterSessionChange();
+      refreshAfterDeviceChange();
       break;
     case 'peer.added':
       showToast('WireGuard peer added', 'success');
       break;
     case 'peer.removed':
       showToast('WireGuard peer removed', 'info');
-      refreshDevicesTable();
       break;
   }
 }
 
 // ── Metrics sparklines ────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  connectWS();
-  document.querySelectorAll('.metrics-chart').forEach(el => {
-    const id = el.dataset.deviceId;
-    if (id) renderMetricsChart(id, el.id);
-  });
-});
-
 function renderMetricsChart(deviceID, containerID) {
   fetch(`/metrics/${deviceID}`).then(r => r.json()).then(snaps => {
     if (!snaps || snaps.length < 2) return;
@@ -147,3 +166,11 @@ function showToast(message, type = 'info') {
   document.body.appendChild(toast);
   setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 250); }, 3500);
 }
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  connectWS();
+  document.querySelectorAll('.metrics-chart').forEach(el => {
+    if (el.dataset.deviceId) renderMetricsChart(el.dataset.deviceId, el.id);
+  });
+});

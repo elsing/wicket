@@ -1,6 +1,9 @@
 package admin
 
-import "time"
+import (
+	"net/http"
+	"time"
+)
 
 // firstChar returns the first character of a string, uppercased, for avatars.
 func firstChar(s string) string {
@@ -80,10 +83,16 @@ func humanEvent(event string) string {
 	return event
 }
 
-
-
 // expiryUrgent returns true when a session expires in < 30 minutes.
 func expiryUrgent(t time.Time) bool { return time.Until(t) < 30*time.Minute }
 
 // expiryWarning returns true when a session expires in < 2 hours.
 func expiryWarning(t time.Time) bool { return time.Until(t) < 2*time.Hour }
+
+// noCacheHeaders wraps a handler to prevent browsers caching static assets.
+func noCacheHeaders(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+		h.ServeHTTP(w, r)
+	})
+}

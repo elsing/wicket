@@ -13,8 +13,8 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/wicket-vpn/wicket/internal/config"
-	"github.com/wicket-vpn/wicket/internal/db"
 	"github.com/wicket-vpn/wicket/internal/core"
+	"github.com/wicket-vpn/wicket/internal/db"
 	"github.com/wicket-vpn/wicket/internal/oidc"
 	"github.com/wicket-vpn/wicket/internal/portal"
 	"github.com/wicket-vpn/wicket/internal/ws"
@@ -61,7 +61,7 @@ func NewHandler(
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Recoverer)
 
-	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.Dir("web/admin/static"))))
+	r.Handle("/static/*", http.StripPrefix("/static/", noCacheHeaders(http.FileServer(http.Dir("web/admin/static")))))
 
 	// Health — unauthenticated
 	r.Get("/health", h.handleHealth)
@@ -202,7 +202,6 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request) {
 
 	http.Redirect(w, r, "/", http.StatusFound)
 }
-
 
 func (h *Handler) handleLocalLogin(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {

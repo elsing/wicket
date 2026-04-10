@@ -109,6 +109,22 @@ function connectWS() {
     try { handleEvent(JSON.parse(evt.data)); } catch(e) {}
   };
 
+  // Send a ping from client every 25s to keep connection alive through
+  // browser tab throttling and proxy idle timeouts.
+  let keepaliveInterval = null;
+
+  ws.onopen = (ws.onopen || function(){}).bind(ws);
+  const _onopen = ws.onopen;
+
+  ws.addEventListener('open', () => {
+    if (keepaliveInterval) clearInterval(keepaliveInterval);
+    keepaliveInterval = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({type: 'ping'}));
+      }
+    }, 25000);
+  });
+
   ws.onclose = () => {
     console.log('[wicket] WS disconnected, reconnecting in 5s...');
     wsReconnect = setTimeout(connectWS, 5000);

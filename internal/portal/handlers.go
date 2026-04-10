@@ -64,7 +64,7 @@ func NewHandler(
 	))
 
 	// Static files
-	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.Dir("web/public/static"))))
+	r.Handle("/static/*", http.StripPrefix("/static/", noCacheHeaders(http.FileServer(http.Dir("web/public/static")))))
 
 	// Public (unauthenticated) routes
 	r.Get("/health", h.handleHealth)
@@ -471,5 +471,3 @@ func clientIP(r *http.Request) string {
 	}
 	return r.RemoteAddr
 }
-
-

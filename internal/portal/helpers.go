@@ -2,6 +2,7 @@ package portal
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 )
@@ -34,4 +35,13 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dh %dm", h, m)
 	}
 	return fmt.Sprintf("%dm", m)
+}
+
+// noCacheHeaders wraps a handler to prevent browsers caching static assets.
+// During active development this prevents stale JS/CSS being served.
+func noCacheHeaders(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+		h.ServeHTTP(w, r)
+	})
 }

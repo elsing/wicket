@@ -235,10 +235,25 @@ func (h *Hub) HandleAgent(w http.ResponseWriter, r *http.Request, agentID string
 	h.log.Info("agent WebSocket disconnected", zap.String("agent_id", agentID))
 }
 
-// serveClient runs the send loop for a connected client.
-// It pumps outgoing messages and handles pings to detect dead connections.
+// serveClient runs the send/receive loop for a connected client.
 func (h *Hub) serveClient(ctx context.Context, c *client) {
-	ping := time.NewTicker(45 * time.Second)
+	// Read loop — runs in a separate goroutine so we can simultaneously send.
+	// nhooyr.io/websocket requires an active reader to process control frames
+	// (pings, pongs, close). Without this, server pings are never answered.
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		for {
+			_, _, err := c.conn.Read(ctx)
+			if err != nil {
+				// Connection closed or context cancelled — expected
+				return
+			}
+			// Client messages (e.g. keepalive pings) are silently discarded.
+		}
+	}()
+
+	ping := time.NewTicker(30 * time.Second)
 	defer ping.Stop()
 
 	for {
@@ -247,13 +262,15 @@ func (h *Hub) serveClient(ctx context.Context, c *client) {
 			c.conn.Close(websocket.StatusNormalClosure, "server shutting down")
 			return
 
+		case <-readDone:
+			// Read loop exited — client disconnected
+			return
+
 		case msg, ok := <-c.send:
 			if !ok {
 				c.conn.Close(websocket.StatusNormalClosure, "")
 				return
 			}
-			// Use a fresh context for writes, not the HTTP request context
-			// which expires with the HTTP read timeout.
 			writeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			err := wsjson.Write(writeCtx, c.conn, json.RawMessage(msg))
 			cancel()
@@ -263,13 +280,10 @@ func (h *Hub) serveClient(ctx context.Context, c *client) {
 			}
 
 		case <-ping.C:
-			// Use a fresh context — the HTTP request context expires with the
-			// server read timeout, causing spurious ping failures.
-			pingCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			pingCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			err := c.conn.Ping(pingCtx)
 			cancel()
 			if err != nil {
-				// Client disconnected — clean exit, not an error worth logging at warn
 				h.log.Debug("WebSocket client gone (ping timeout)", zap.String("kind", string(c.kind)))
 				return
 			}
