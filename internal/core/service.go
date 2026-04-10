@@ -330,7 +330,7 @@ func (s *Service) ApproveDevice(ctx context.Context, deviceID, adminUserID, ipAd
 		s.log.Warn("writing device approved audit log", zap.Error(err))
 	}
 
-	s.emit(Event{Type: EventDeviceApproved, DeviceID: deviceID, UserID: dev.UserID})
+	s.emit(Event{Type: EventDeviceApproved, DeviceID: deviceID, UserID: dev.UserID, Payload: map[string]any{"device_name": dev.Name}})
 	return nil
 }
 
@@ -355,7 +355,30 @@ func (s *Service) RejectDevice(ctx context.Context, deviceID, adminUserID, ipAdd
 		s.log.Warn("writing device rejected audit log", zap.Error(err))
 	}
 
-	s.emit(Event{Type: EventDeviceRejected, DeviceID: deviceID, UserID: dev.UserID})
+	s.emit(Event{Type: EventDeviceRejected, DeviceID: deviceID, UserID: dev.UserID, Payload: map[string]any{"device_name": dev.Name}})
+	return nil
+}
+
+// DeleteDevice removes a device, revokes any active sessions, and removes the WireGuard peer.
+func (s *Service) DeleteDevice(ctx context.Context, deviceID, actorUserID string, isAdmin bool) error {
+	dev, err := s.db.GetDeviceByID(ctx, deviceID)
+	if err != nil {
+		return fmt.Errorf("getting device: %w", err)
+	}
+	if !isAdmin && dev.UserID != actorUserID {
+		return errors.New("not authorised to delete this device")
+	}
+
+	// Remove the WireGuard peer immediately.
+	if err := s.peers.RemovePeer(dev.PublicKey); err != nil {
+		s.log.Warn("removing peer on device delete", zap.String("device", dev.Name), zap.Error(err))
+	}
+
+	if err := s.db.DeleteDevice(ctx, deviceID); err != nil {
+		return fmt.Errorf("deleting device: %w", err)
+	}
+
+	s.log.Info("device deleted", zap.String("device", dev.Name), zap.String("actor", actorUserID))
 	return nil
 }
 
@@ -718,9 +741,8 @@ func (s *Service) allocateIP(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("parsing server VPN address %q: %w", s.cfg.WireGuard.Address, err)
 	}
 
-	// Build a set of all currently assigned IPs (including all devices, not
-	// just approved ones, so pending devices don't get conflicting IPs).
-	allDevices, err := s.db.ListApprovedActiveDevices(ctx)
+	// Use ALL devices (pending, disabled, approved) so IPs are never reused.
+	allDevices, err := s.db.ListAllDevices(ctx)
 	if err != nil {
 		return "", fmt.Errorf("listing devices for IP allocation: %w", err)
 	}

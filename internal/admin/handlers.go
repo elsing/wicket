@@ -85,6 +85,7 @@ func NewHandler(
 		r.Post("/devices/{deviceID}/reject", h.handleRejectDevice)
 		r.Post("/devices/{deviceID}/disable", h.handleDisableDevice)
 		r.Post("/devices/{deviceID}/enable", h.handleEnableDevice)
+		r.Delete("/devices/{deviceID}", h.handleDeleteDevice)
 
 		r.Get("/sessions", h.handleSessions)
 		r.Post("/sessions/{sessionID}/revoke", h.handleRevokeSession)
@@ -96,6 +97,7 @@ func NewHandler(
 
 		r.Get("/groups", h.handleGroups)
 		r.Post("/groups", h.handleCreateGroup)
+		r.Delete("/groups/{groupID}", h.handleDeleteGroup)
 		r.Post("/groups/{groupID}/subnets", h.handleAssignGroupSubnet)
 		r.Delete("/groups/{groupID}/subnets/{subnetID}", h.handleRemoveGroupSubnet)
 
@@ -198,6 +200,7 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request) {
 
 	http.Redirect(w, r, "/", http.StatusFound)
 }
+
 
 func (h *Handler) handleLocalLogin(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
@@ -401,7 +404,13 @@ func (h *Handler) handleGroups(w http.ResponseWriter, r *http.Request) {
 	sess := portal.SessionFromContext(r.Context())
 	groups, _ := h.svc.ListAllGroups(r.Context())
 	subnets, _ := h.svc.ListAllSubnets(r.Context())
-	renderAdminGroups(w, r, AdminGroupsData{Session: sess, Groups: groups, Subnets: subnets})
+	groupSubnets, _ := h.svc.DB().ListGroupSubnets(r.Context())
+	renderAdminGroups(w, r, AdminGroupsData{
+		Session:      sess,
+		Groups:       groups,
+		Subnets:      subnets,
+		GroupSubnets: groupSubnets,
+	})
 }
 
 func (h *Handler) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
@@ -430,19 +439,21 @@ func (h *Handler) handleAssignGroupSubnet(w http.ResponseWriter, r *http.Request
 		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
-	if err := h.svc.DB().AddSubnetToGroup(r.Context(), chi.URLParam(r, "groupID"), r.FormValue("subnet_id")); err != nil {
+	groupID := chi.URLParam(r, "groupID")
+	if err := h.svc.DB().AddSubnetToGroup(r.Context(), groupID, r.FormValue("subnet_id")); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.WriteHeader(http.StatusOK)
+	h.handleGroups(w, r)
 }
 
 func (h *Handler) handleRemoveGroupSubnet(w http.ResponseWriter, r *http.Request) {
-	if err := h.svc.DB().RemoveSubnetFromGroup(r.Context(), chi.URLParam(r, "groupID"), chi.URLParam(r, "subnetID")); err != nil {
+	groupID := chi.URLParam(r, "groupID")
+	if err := h.svc.DB().RemoveSubnetFromGroup(r.Context(), groupID, chi.URLParam(r, "subnetID")); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.WriteHeader(http.StatusOK)
+	h.handleGroups(w, r)
 }
 
 func (h *Handler) handleSubnets(w http.ResponseWriter, r *http.Request) {
@@ -542,6 +553,25 @@ func (h *Handler) handleDeviceMetrics(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	sess := portal.SessionFromContext(r.Context())
 	h.hub.HandleAdmin(w, r, sess.UserID)
+}
+
+func (h *Handler) handleDeleteDevice(w http.ResponseWriter, r *http.Request) {
+	sess := portal.SessionFromContext(r.Context())
+	deviceID := chi.URLParam(r, "deviceID")
+	if err := h.svc.DeleteDevice(r.Context(), deviceID, sess.UserID, true); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (h *Handler) handleDeleteGroup(w http.ResponseWriter, r *http.Request) {
+	groupID := chi.URLParam(r, "groupID")
+	if err := h.svc.DB().DeleteGroup(r.Context(), groupID); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 func clientIP(r *http.Request) string {

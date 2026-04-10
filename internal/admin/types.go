@@ -31,9 +31,10 @@ type AdminUsersData struct {
 }
 
 type AdminGroupsData struct {
-	Session *portal.SessionData
-	Groups  []*db.Group
-	Subnets []*db.Subnet
+	Session      *portal.SessionData
+	Groups       []*db.Group
+	Subnets      []*db.Subnet
+	GroupSubnets map[string][]string // groupID -> []subnetID
 }
 
 type AdminSubnetsData struct {

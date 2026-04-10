@@ -79,6 +79,7 @@ func NewHandler(
 		r.Get("/devices/new", h.handleNewDevice)
 		r.Post("/devices", h.handleCreateDevice)
 		r.Post("/devices/{deviceID}/auto-renew", h.handleSetAutoRenew)
+		r.Delete("/devices/{deviceID}", h.handleDeleteDevice)
 
 		r.Post("/sessions", h.handleActivateSession)
 		r.Post("/sessions/group/{groupID}", h.handleActivateGroupSessions)
@@ -309,6 +310,16 @@ func (h *Handler) handleSetAutoRenew(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+func (h *Handler) handleDeleteDevice(w http.ResponseWriter, r *http.Request) {
+	session := SessionFromContext(r.Context())
+	deviceID := chi.URLParam(r, "deviceID")
+	if err := h.svc.DeleteDevice(r.Context(), deviceID, session.UserID, false); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Sessions
 // ─────────────────────────────────────────────────────────────────────────────
@@ -409,3 +420,5 @@ func clientIP(r *http.Request) string {
 	}
 	return r.RemoteAddr
 }
+
+

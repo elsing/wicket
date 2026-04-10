@@ -423,38 +423,67 @@ templ AdminUsersPage(data AdminUsersData) {
 templ AdminGroupsPage(data AdminGroupsData) {
 	@AdminLayout("Groups", data.Session, "groups") {
 		<div class="two-col">
-			<div class="table-wrap card">
-				<table class="table">
-					<thead>
-						<tr><th>Name</th><th>Session Duration</th><th>Max Extensions</th><th>Public</th></tr>
-					</thead>
-					<tbody id="groups-table">
-						for _, g := range data.Groups {
-							<tr>
-								<td class="font-medium">{ g.Name }</td>
-								<td>{ g.SessionDuration.String() }</td>
-								<td>
-									if g.MaxExtensions.Valid {
-										{ itoa(int(g.MaxExtensions.Int64)) }
-									} else {
-										Unlimited
-									}
-								</td>
-								<td>
+			<div style="display:flex;flex-direction:column;gap:16px" id="groups-list">
+				for _, g := range data.Groups {
+					<div class="card" id={ "group-" + g.ID } style="padding:20px 24px">
+						<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+							<div>
+								<div style="font-weight:600;font-size:15px">{ g.Name }</div>
+								<div style="font-size:12px;color:var(--text-2);margin-top:2px">
+									{ g.SessionDuration.String() } sessions ·
 									if g.IsPublic {
-										<span class="badge badge-success">Public</span>
+										<span class="badge badge-success" style="font-size:11px">Public</span>
 									} else {
-										<span class="badge badge-muted">Restricted</span>
+										<span class="badge badge-muted" style="font-size:11px">Restricted</span>
 									}
-								</td>
-							</tr>
-						}
-					</tbody>
-				</table>
+								</div>
+							</div>
+							<button class="btn btn-sm btn-ghost" style="color:var(--error)"
+								hx-delete={ "/groups/" + g.ID }
+								hx-target={ "#group-" + g.ID } hx-swap="delete"
+								hx-confirm={ "Delete group \"" + g.Name + "\"? It must have no devices assigned." }>
+								Delete
+							</button>
+						</div>
+						<div>
+							<div style="font-size:12px;font-weight:500;color:var(--text-2);margin-bottom:8px">SUBNETS</div>
+							<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">
+								for _, s := range data.Subnets {
+									if groupHasSubnet(g.ID, s.ID, data.GroupSubnets) {
+										<span class="badge badge-success" style="gap:8px">
+											{ s.Name } ({ s.CIDR })
+											<button
+												style="background:none;border:none;cursor:pointer;color:inherit;padding:0;font-size:14px;line-height:1"
+												hx-delete={ "/groups/" + g.ID + "/subnets/" + s.ID }
+												hx-target={ "#group-" + g.ID } hx-swap="outerHTML"
+												title="Remove subnet">×</button>
+										</span>
+									}
+								}
+							</div>
+							<select
+								class="input"
+								style="font-size:12px;padding:5px 10px;max-width:280px"
+								hx-post={ "/groups/" + g.ID + "/subnets" }
+								hx-target={ "#group-" + g.ID } hx-swap="outerHTML"
+								hx-include="this"
+								name="subnet_id"
+								hx-trigger="change"
+							>
+								<option value="">Add subnet…</option>
+								for _, s := range data.Subnets {
+									if !groupHasSubnet(g.ID, s.ID, data.GroupSubnets) {
+										<option value={ s.ID }>{ s.Name } ({ s.CIDR })</option>
+									}
+								}
+							</select>
+						</div>
+					</div>
+				}
 			</div>
 			<div class="card form-panel">
 				<h3>Create Group</h3>
-				<form hx-post="/groups" hx-target="#groups-table" hx-swap="innerHTML" class="form">
+				<form hx-post="/groups" hx-target="#groups-list" hx-swap="innerHTML" class="form">
 					<div class="form-field">
 						<label>Name</label>
 						<input type="text" name="name" class="input" placeholder="engineering" required/>
@@ -465,13 +494,13 @@ templ AdminGroupsPage(data AdminGroupsData) {
 					</div>
 					<div class="form-field">
 						<label>Session Duration</label>
-						<input type="text" name="session_duration" class="input" placeholder="24h" value="24h"/>
+						<input type="text" name="session_duration" class="input" value="24h"/>
 						<p class="form-hint">e.g. 8h, 24h, 168h</p>
 					</div>
 					<div class="form-field">
-						<label class="toggle-label">
+						<label class="toggle-label" style="flex-direction:row;align-items:center;gap:10px">
 							<input type="checkbox" name="is_public" value="true" class="toggle"/>
-							<span>Public (any user can select)</span>
+							<span>Public (any user can select this group)</span>
 						</label>
 					</div>
 					<button type="submit" class="btn btn-primary">Create Group</button>

@@ -82,3 +82,42 @@ func (d *DB) CreateLocalAdmin(ctx context.Context, username, passwordHash string
 		newID(), username, passwordHash, time.Now().UTC())
 	return err
 }
+
+// DeleteDevice removes a device and all its sessions and subnet assignments.
+func (d *DB) DeleteDevice(ctx context.Context, id string) error {
+	_, err := d.sql.ExecContext(ctx, `DELETE FROM devices WHERE id = ?`, id)
+	return err
+}
+
+// DeleteGroup removes a group. Fails if devices are still assigned to it.
+func (d *DB) DeleteGroup(ctx context.Context, id string) error {
+	// Check for devices first
+	var count int
+	if err := d.sql.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM devices WHERE group_id = ?`, id).Scan(&count); err != nil {
+		return err
+	}
+	if count > 0 {
+		return fmt.Errorf("cannot delete group: %d device(s) still assigned to it", count)
+	}
+	_, err := d.sql.ExecContext(ctx, `DELETE FROM groups WHERE id = ?`, id)
+	return err
+}
+
+// ListGroupSubnets returns a map of groupID -> []subnetID for all groups.
+func (d *DB) ListGroupSubnets(ctx context.Context) (map[string][]string, error) {
+	rows, err := d.sql.QueryContext(ctx, `SELECT group_id, subnet_id FROM group_subnets`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make(map[string][]string)
+	for rows.Next() {
+		var gid, sid string
+		if err := rows.Scan(&gid, &sid); err != nil {
+			return nil, err
+		}
+		result[gid] = append(result[gid], sid)
+	}
+	return result, rows.Err()
+}

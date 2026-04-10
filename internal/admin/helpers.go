@@ -41,3 +41,16 @@ func eventClass(event string) string {
 	}
 	return "event-default"
 }
+
+// groupHasSubnet checks whether a group has a specific subnet assigned.
+func groupHasSubnet(groupID, subnetID string, groupSubnets map[string][]string) bool {
+	if groupSubnets == nil {
+		return false
+	}
+	for _, sid := range groupSubnets[groupID] {
+		if sid == subnetID {
+			return true
+		}
+	}
+	return false
+}
