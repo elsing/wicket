@@ -20,11 +20,18 @@ import (
 
 // Service is the central business logic layer.
 type Service struct {
-	db      *db.DB
-	peers   wireguard.PeerManager
-	cfg     *config.Config
-	log     *zap.Logger
-	eventCh chan Event
+	db         *db.DB
+	peers      wireguard.PeerManager
+	cfg        *config.Config
+	log        *zap.Logger
+	eventCh    chan Event
+	reconciler *Reconciler // set after construction via SetReconciler
+}
+
+// SetReconciler wires the reconciler into the service so health checks can
+// report its last run time.
+func (s *Service) SetReconciler(r *Reconciler) {
+	s.reconciler = r
 }
 
 // NewService constructs the core service.
@@ -731,6 +738,15 @@ func (s *Service) ListAllSubnets(ctx context.Context) ([]*db.Subnet, error) {
 type HealthStatus struct {
 	Healthy bool              `json:"healthy"`
 	Checks  map[string]string `json:"checks"`
+}
+
+// ReconcilerLastRun returns the time the reconciler last completed a pass.
+// Used by the health check socket command.
+func (s *Service) ReconcilerLastRun() time.Time {
+	if s.reconciler == nil {
+		return time.Time{}
+	}
+	return s.reconciler.LastRun()
 }
 
 // Health returns the current health of all subsystems.

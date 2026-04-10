@@ -66,6 +66,7 @@ func New(cfg *config.Config, log *zap.Logger) (*Server, error) {
 	svc := NewService(database, pm, cfg, log)
 	retainMetrics := time.Duration(cfg.Metrics.RetentionDays) * 24 * time.Hour
 	rec := NewReconciler(database, pm, svc, retainMetrics, log)
+	svc.SetReconciler(rec) // wire back so health check can report last run time
 
 	srv := &Server{
 		cfg:        cfg,
@@ -132,7 +133,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.log.Info("CLI socket listening", zap.String("path", s.cfg.Server.SocketPath))
 
 	publicErrCh := make(chan error, 1)
-	adminErrCh  := make(chan error, 1)
+	adminErrCh := make(chan error, 1)
 
 	go func() {
 		s.log.Info("public portal listening", zap.String("addr", s.cfg.Public.BindAddr))
