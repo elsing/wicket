@@ -18,7 +18,7 @@ templ AdminLayout(title string, session *portal.SessionData, activeNav string) {
 		<script src="https://unpkg.com/htmx.org@2.0.0/dist/htmx.min.js" defer></script>
 		<link rel="stylesheet" href="/static/css/admin.css"/>
 	</head>
-	<body>
+	<body hx-boost="true">
 	<div class="admin-shell">
 		<aside class="sidebar">
 			<div class="sidebar-brand">
@@ -65,7 +65,7 @@ templ AdminLayout(title string, session *portal.SessionData, activeNav string) {
 					</div>
 				</div>
 			</header>
-			<main class="admin-main">
+			<main class="admin-main" id="main-content">
 				{ children... }
 			</main>
 		</div>
@@ -87,40 +87,49 @@ templ navItem(href, key, activeNav, label string) {
 
 templ AdminDashboardPage(data AdminDashboardData) {
 	@AdminLayout("Dashboard", data.Session, "dashboard") {
-		<div class="stats-grid">
-			<a href="/devices?filter=pending" class="stat-card card" style="text-decoration:none;cursor:pointer">
-				<div class="stat-label">Pending Approvals</div>
-				<div class="stat-value stat-warning">{ itoa(len(data.PendingDevices)) }</div>
-			</a>
-			<a href="/sessions" class="stat-card card" style="text-decoration:none;cursor:pointer">
-				<div class="stat-label">Active Sessions</div>
-				<div class="stat-value stat-success">{ itoa(len(data.ActiveSessions)) }</div>
-			</a>
-			<a href="/agents" class="stat-card card" style="text-decoration:none;cursor:pointer">
-				<div class="stat-label">Connected Agents</div>
-				<div class="stat-value">{ itoa(data.WSCounts[ws.KindAgent]) }</div>
-			</a>
-			<a href="/audit" class="stat-card card" style="text-decoration:none;cursor:pointer">
-				<div class="stat-label">Users Online</div>
-				<div class="stat-value">{ itoa(data.WSCounts[ws.KindPublic]) }</div>
-			</a>
+		<div id="dashboard-content">
+			@DashboardContent(data)
 		</div>
+	}
+}
 
-		<section class="dashboard-section">
-			<h2>
-				Pending Approvals
-				if len(data.PendingDevices) > 0 {
-					<span class="badge badge-warning">{ itoa(len(data.PendingDevices)) }</span>
-				}
-			</h2>
-			<div id="pending-devices">
-				if len(data.PendingDevices) > 0 {
-					@PendingDevicesTable(data.PendingDevices)
-				} else {
-					<p class="text-muted" style="padding:16px;font-size:14px">No pending approvals</p>
-				}
-			</div>
-		</section>
+// DashboardContent renders the refreshable part of the dashboard.
+// Returned standalone for HTMX fragment refreshes triggered by WS events.
+templ DashboardContent(data AdminDashboardData) {
+	<div class="stats-grid">
+		<a href="/devices?filter=pending" class="stat-card card" style="text-decoration:none;cursor:pointer">
+			<div class="stat-label">Pending Approvals</div>
+			<div class="stat-value stat-warning">{ itoa(len(data.PendingDevices)) }</div>
+		</a>
+		<a href="/sessions" class="stat-card card" style="text-decoration:none;cursor:pointer">
+			<div class="stat-label">Active Sessions</div>
+			<div class="stat-value stat-success">{ itoa(len(data.ActiveSessions)) }</div>
+		</a>
+		<a href="/agents" class="stat-card card" style="text-decoration:none;cursor:pointer">
+			<div class="stat-label">Connected Agents</div>
+			<div class="stat-value">{ itoa(data.WSCounts[ws.KindAgent]) }</div>
+		</a>
+		<a href="/audit" class="stat-card card" style="text-decoration:none;cursor:pointer">
+			<div class="stat-label">Users Online</div>
+			<div class="stat-value">{ itoa(data.WSCounts[ws.KindPublic]) }</div>
+		</a>
+	</div>
+
+	<section class="dashboard-section">
+		<h2>
+			Pending Approvals
+			if len(data.PendingDevices) > 0 {
+				<span class="badge badge-warning">{ itoa(len(data.PendingDevices)) }</span>
+			}
+		</h2>
+		<div id="pending-devices">
+			if len(data.PendingDevices) > 0 {
+				@PendingDevicesTable(data.PendingDevices)
+			} else {
+				<p class="text-muted" style="padding:16px;font-size:14px">No pending approvals</p>
+			}
+		</div>
+	</section>
 
 		<section class="dashboard-section">
 			<h2>Active Sessions</h2>
@@ -168,7 +177,7 @@ templ AdminDashboardPage(data AdminDashboardData) {
 			</div>
 		</section>
 	}
-}
+
 
 templ PendingDevicesTable(devices []*db.Device) {
 	<div class="table-wrap card">
@@ -836,7 +845,7 @@ templ AdminLocalLoginPage(errorMsg string) {
 		<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"/>
 		<link rel="stylesheet" href="/static/css/admin.css"/>
 	</head>
-	<body>
+	<body hx-boost="true">
 	<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px">
 		<div class="card" style="width:100%;max-width:380px;padding:40px 36px;text-align:center">
 			<svg style="width:40px;height:40px;color:var(--primary);margin:0 auto 20px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

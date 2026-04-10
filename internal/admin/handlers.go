@@ -78,6 +78,7 @@ func NewHandler(
 		r.Use(portal.RequireAdmin)
 
 		r.Get("/", h.handleDashboard)
+		r.Get("/dashboard/fragment", h.handleDashboardFragment)
 		r.Get("/ws", h.handleWebSocket)
 
 		r.Get("/devices", h.handleDevices)
@@ -267,6 +268,21 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		Agents:         agents,
 		WSCounts:       h.hub.ConnectedCount(),
 	})
+}
+
+func (h *Handler) handleDashboardFragment(w http.ResponseWriter, r *http.Request) {
+	sess := portal.SessionFromContext(r.Context())
+	pending, _ := h.svc.DB().ListPendingDevices(r.Context())
+	active, _ := h.svc.DB().ListActiveSessions(r.Context())
+	agents, _ := h.svc.DB().ListAgents(r.Context())
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	DashboardContent(AdminDashboardData{
+		Session:        sess,
+		PendingDevices: pending,
+		ActiveSessions: active,
+		Agents:         agents,
+		WSCounts:       h.hub.ConnectedCount(),
+	}).Render(r.Context(), w) //nolint:errcheck
 }
 
 func (h *Handler) handleDevices(w http.ResponseWriter, r *http.Request) {

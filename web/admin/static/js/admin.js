@@ -18,9 +18,10 @@ function toggleTheme() {
 // whatever is relevant. The admin may be on dashboard, devices, sessions etc.
 
 function refreshAfterDeviceChange() {
-  // Dashboard: refresh pending approvals panel
-  if (document.getElementById('pending-devices')) {
-    htmx.ajax('GET', '/devices/pending', { target: '#pending-devices', swap: 'innerHTML' });
+  // Dashboard: refresh entire dashboard content (stats + pending)
+  if (document.getElementById('dashboard-content')) {
+    htmx.ajax('GET', '/dashboard/fragment', { target: '#dashboard-content', swap: 'innerHTML' });
+    return;
   }
   // Devices page: refresh the full table body
   if (document.getElementById('devices-tbody')) {
