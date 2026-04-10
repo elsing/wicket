@@ -1,0 +1,91 @@
+# Wicket configuration file
+# ─────────────────────────────────────────────────────────────────────────────
+# IMPORTANT: Do NOT put secrets in this file if it is checked into version
+# control. Use environment variables instead (see docker-compose.yml).
+#
+# Environment variable overrides:
+#   WICKET_WG_PRIVATE_KEY
+#   WICKET_OIDC_CLIENT_ID
+#   WICKET_OIDC_CLIENT_SECRET
+#   WICKET_PUBLIC_SESSION_SECRET
+#   WICKET_ADMIN_HMAC_SECRET
+#   WICKET_ADMIN_SESSION_SECRET
+#   WICKET_SMTP_PASSWORD
+#   WICKET_AGENT_TOKEN
+
+server:
+  socket_path: /var/run/wicket/core.sock
+  external_url: https://vpn.example.com
+  environment: production   # production | development
+
+db:
+  path: /data/wicket.db
+
+wireguard:
+  interface: wg1  # change to avoid conflict with existing interfaces
+  listen_port: 51820
+  private_key: ""           # use WICKET_WG_PRIVATE_KEY env var
+  address: 10.10.0.1/24    # server VPN address with CIDR
+  endpoint: vpn.example.com:51820
+  dns:
+    - 1.1.1.1
+    - 1.0.0.1
+  mtu: 1420
+
+oidc:
+  issuer: https://auth.example.com/application/o/wicket/
+  client_id: ""             # use WICKET_OIDC_CLIENT_ID env var
+  client_secret: ""         # use WICKET_OIDC_CLIENT_SECRET env var
+  scopes:
+    - openid
+    - profile
+    - email
+
+public:
+  bind_addr: 0.0.0.0:8080
+  session_secret: ""        # use WICKET_PUBLIC_SESSION_SECRET env var (min 32 bytes)
+  session_duration: 12h     # portal login session duration
+
+admin:
+  bind_addr: 127.0.0.1:9090   # MUST be private — never 0.0.0.0
+  # External URL of the admin portal — used for its own OIDC callback.
+  # Register https://your-admin-url/auth/callback in Authentik as an allowed redirect URI.
+  external_url: https://wicket-admin.example.com
+  hmac_secret: ""           # use WICKET_ADMIN_HMAC_SECRET env var (min 32 bytes)
+  session_secret: ""        # use WICKET_ADMIN_SESSION_SECRET env var (min 32 bytes)
+
+smtp:
+  enabled: false
+  host: smtp.example.com
+  port: 587
+  username: wicket@example.com
+  password: ""              # use WICKET_SMTP_PASSWORD env var
+  from: "Wicket <wicket@example.com>"
+  use_tls: false            # false = STARTTLS (587), true = implicit TLS (465)
+
+security:
+  rate_limit_requests: 60
+  rate_limit_window: 1m
+  allow_portal_session_extension: true
+  max_login_attempts: 10
+  login_block_duration: 15m
+
+metrics:
+  sample_interval: 30s
+  retention_days: 90
+
+logging:
+  level: info               # debug | info | warn | error
+  format: json              # json | console
+
+# Agent config — only needed when running a remote WireGuard agent
+# agent:
+#   core_url: ws://core.internal:8081/ws/agent
+#   token: ""               # use WICKET_AGENT_TOKEN env var
+#   core_timeout: 6h
+#   wireguard:
+#     interface: wg1  # change to avoid conflict with existing interfaces
+#     listen_port: 51820
+#     private_key: ""
+#     address: 10.10.1.1/24
+#     endpoint: agent1.example.com:51820

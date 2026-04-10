@@ -1,0 +1,393 @@
+package portal
+
+import (
+	"github.com/wicket-vpn/wicket/internal/db"
+)
+
+// Base layout shared by all public portal pages.
+// Uses CSS custom properties for theming so light/dark mode works cleanly.
+// HTMX and a small websocket script are loaded from CDN.
+
+templ Layout(title string, session *SessionData) {
+	<!DOCTYPE html>
+	<html lang="en" data-theme="auto">
+	<head>
+		<meta charset="UTF-8"/>
+		<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+		<title>{ title } — Wicket</title>
+		<link rel="preconnect" href="https://fonts.googleapis.com"/>
+		<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"/>
+		<script src="https://unpkg.com/htmx.org@2.0.0/dist/htmx.min.js" defer></script>
+		<script src="https://unpkg.com/htmx-ext-ws@2.0.0/ws.js" defer></script>
+		<link rel="stylesheet" href="/static/css/portal.css"/>
+	</head>
+	<body hx-ext="ws" ws-connect="/ws">
+
+	<nav class="nav">
+		<div class="nav-brand">
+			<svg class="nav-logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+				<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+			</svg>
+			<span>Wicket</span>
+		</div>
+		if session != nil {
+			<div class="nav-user">
+				<span class="nav-email">{ session.Email }</span>
+				<form method="POST" action="/auth/logout" style="display:inline">
+					<button type="submit" class="btn btn-ghost btn-sm">Sign out</button>
+				</form>
+			</div>
+		}
+		<button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme">
+			<svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+				<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/>
+				<line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+				<line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/>
+				<line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+				<line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+			</svg>
+			<svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+				<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+			</svg>
+		</button>
+	</nav>
+
+	<main class="main">
+		{ children... }
+	</main>
+
+	<script src="/static/js/portal.js"></script>
+	</body>
+	</html>
+}
+
+// LoginPage is the OIDC login landing page.
+templ LoginPage(errorMsg string) {
+	@Layout("Sign in", nil) {
+		<div class="login-container">
+			<div class="login-card card">
+				<div class="login-icon">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+						<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+					</svg>
+				</div>
+				<h1 class="login-title">Wicket</h1>
+				<p class="login-subtitle">Sign in to manage your VPN devices</p>
+				if errorMsg != "" {
+					<div class="alert alert-error">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/>
+							<line x1="12" y1="16" x2="12.01" y2="16"/>
+						</svg>
+						{ errorMsg }
+					</div>
+				}
+				<a href="/auth/login" class="btn btn-primary btn-lg btn-full">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
+						<polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/>
+					</svg>
+					Sign in with SSO
+				</a>
+			</div>
+		</div>
+	}
+}
+
+// DashboardPage renders the user's device management dashboard.
+templ DashboardPage(data DashboardData) {
+	@Layout("My Devices", data.Session) {
+		<div class="dashboard">
+			<div class="dashboard-header">
+				<h1>My Devices</h1>
+				<a href="/devices/new" class="btn btn-primary">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+					</svg>
+					Add Device
+				</a>
+			</div>
+
+			<div id="device-list" class="device-list">
+				@DeviceListContent(data)
+			</div>
+		</div>
+	}
+}
+
+// DeviceListContent renders the grouped device list (used for HTMX updates).
+templ DeviceListContent(data DashboardData) {
+	if pending := data.PendingDevices(); len(pending) > 0 {
+		<div class="device-group">
+			<div class="device-group-header">
+				<div class="device-group-title">
+					<div class="status-dot status-pending"></div>
+					<span>Pending Approval</span>
+				</div>
+			</div>
+			<div class="device-group-cards">
+				for _, dev := range pending {
+					@DeviceCard(dev)
+				}
+			</div>
+		</div>
+	}
+	for _, group := range data.Groups {
+		if devices := data.DevicesForGroup(group.Name); len(devices) > 0 {
+			<div class="device-group" id={ "group-" + group.ID }>
+				<div class="device-group-header">
+					<div class="device-group-title">
+						<div class="status-dot status-active"></div>
+						<span>{ group.Name }</span>
+					</div>
+					<div class="device-group-actions">
+						<button
+							class="btn btn-sm btn-outline"
+							hx-post={ "/sessions/group/" + group.ID }
+							hx-target="#device-list"
+							hx-swap="innerHTML"
+						>Activate all</button>
+					</div>
+				</div>
+				<div class="device-group-cards">
+					for _, dev := range devices {
+						@DeviceCard(dev)
+					}
+				</div>
+			</div>
+		}
+	}
+		if len(data.Devices) == 0 {
+		<div class="empty-state">
+			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+				<rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/>
+				<line x1="12" y1="17" x2="12" y2="21"/>
+			</svg>
+			<h3>No devices yet</h3>
+			<p>Add your first device to get started</p>
+			<a href="/devices/new" class="btn btn-primary">Add Device</a>
+		</div>
+	}
+}
+
+// DeviceCard renders a single device card with its session status.
+templ DeviceCard(dev *db.Device) {
+	<div class="device-card card" id={ "device-" + dev.ID }>
+		<div class="device-card-header">
+			<div class="device-card-name">
+				<svg class="device-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/>
+					<line x1="12" y1="17" x2="12" y2="21"/>
+				</svg>
+				<span>{ dev.Name }</span>
+			</div>
+			@DeviceStatusBadge(dev)
+		</div>
+
+		if dev.Group != nil {
+			<div class="device-card-group">{ dev.Group.Name }</div>
+		}
+
+		<div class="device-card-footer">
+			@DeviceActions(dev)
+			<label class="toggle-label">
+				<span>Auto-renew</span>
+				<input
+					type="checkbox"
+					class="toggle"
+					checked?={ dev.AutoRenew }
+					hx-post={ "/devices/" + dev.ID + "/auto-renew" }
+					hx-vals={ autoRenewVal(!dev.AutoRenew) }
+					hx-target={ "#device-" + dev.ID }
+					hx-swap="outerHTML"
+				/>
+			</label>
+		</div>
+	</div>
+}
+
+// DeviceStatusBadge renders the device's current status indicator.
+templ DeviceStatusBadge(dev *db.Device) {
+	if !dev.IsApproved {
+		<span class="badge badge-warning">Pending</span>
+	} else if !dev.IsActive {
+		<span class="badge badge-error">Disabled</span>
+	} else if dev.ActiveSession != nil && dev.ActiveSession.IsActive() {
+		<span class="badge badge-success">
+			Active · { formatDuration(dev.ActiveSession.TimeRemaining()) }
+		</span>
+	} else {
+		<span class="badge badge-muted">Inactive</span>
+	}
+}
+
+// DeviceActions renders the action buttons for a device card.
+templ DeviceActions(dev *db.Device) {
+	<div class="device-actions">
+		if dev.IsApproved && dev.IsActive {
+			if dev.ActiveSession != nil && dev.ActiveSession.IsActive() {
+				// Active: show extend and deactivate
+				<button
+					class="btn btn-sm btn-outline"
+					hx-post={ "/sessions/" + dev.ActiveSession.ID + "/extend" }
+					hx-target={ "#device-" + dev.ID + " .badge-success" }
+					hx-swap="outerHTML"
+				>
+					Extend
+				</button>
+				<button
+					class="btn btn-sm btn-ghost"
+					hx-delete={ "/sessions/" + dev.ActiveSession.ID }
+					hx-target={ "#device-" + dev.ID }
+					hx-swap="outerHTML"
+					hx-confirm="Deactivate this device?"
+				>
+					Deactivate
+				</button>
+			} else {
+				// Inactive: show activate button
+				<button
+					class="btn btn-sm btn-primary"
+					hx-post="/sessions"
+					hx-vals={ `{"device_id":"` + dev.ID + `"}` }
+					hx-target={ "#device-" + dev.ID }
+					hx-swap="outerHTML"
+				>
+					Activate
+				</button>
+			}
+		}
+	</div>
+}
+
+// SessionStatusFragment renders just the session status badge (for HTMX updates).
+templ SessionStatusFragment(session *db.Session) {
+	if session != nil && session.IsActive() {
+		<span class="badge badge-success">
+			Active · { formatDuration(session.TimeRemaining()) }
+		</span>
+	} else {
+		<span class="badge badge-muted">Inactive</span>
+	}
+}
+
+// NewDevicePage renders the new device creation form.
+templ NewDevicePage(data NewDeviceData) {
+	@Layout("Add Device", data.Session) {
+		<div class="form-page">
+			<div class="form-card card">
+				<div class="form-header">
+					<a href="/" class="btn btn-ghost btn-sm">← Back</a>
+					<h1>Add Device</h1>
+					<p>Create a new WireGuard config. The private key is shown once and never stored.</p>
+				</div>
+
+				if data.Error != "" {
+					<div class="alert alert-error">{ data.Error }</div>
+				}
+
+				<form method="POST" action="/devices" class="form">
+					<div class="form-field">
+						<label for="name">Device name</label>
+						<input
+							type="text"
+							id="name"
+							name="name"
+							class="input"
+							placeholder="e.g. Work Laptop"
+							required
+							autofocus
+						/>
+					</div>
+
+					<div class="form-field">
+						<label for="group_id">Group</label>
+						<select id="group_id" name="group_id" class="input" required>
+							<option value="">Select a group…</option>
+							for _, g := range data.Groups {
+								<option value={ g.ID }>
+									{ g.Name }
+									if g.Description != "" {
+										— { g.Description }
+									}
+								</option>
+							}
+						</select>
+						<p class="form-hint">The group determines which subnets you can reach and how long sessions last.</p>
+					</div>
+
+					<div class="form-actions">
+						<a href="/" class="btn btn-ghost">Cancel</a>
+						<button type="submit" class="btn btn-primary">Create Device</button>
+					</div>
+				</form>
+			</div>
+		</div>
+	}
+}
+
+// ConfigDownloadPage shows the one-time config download.
+templ ConfigDownloadPage(data ConfigDownloadData) {
+	@Layout("Download Config", data.Session) {
+		<div class="form-page">
+			<div class="form-card card config-download">
+				<div class="config-warning">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+						<line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+					</svg>
+					<div>
+						<strong>One-time download</strong>
+						<p>This config contains your private key. It will not be shown again. Save it now.</p>
+					</div>
+				</div>
+
+				<div class="config-device-name">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/>
+						<line x1="12" y1="17" x2="12" y2="21"/>
+					</svg>
+					{ data.Device.Name }
+					<span class="badge badge-warning">Pending approval</span>
+				</div>
+
+				<div class="config-block">
+					<pre class="config-text">{ data.ConfigFile }</pre>
+				</div>
+
+				<div class="config-actions">
+					<a
+						href={ templ.SafeURL("data:text/plain;charset=utf-8," + urlEncode(data.ConfigFile)) }
+						download={ data.Device.Name + ".conf" }
+						class="btn btn-primary"
+						onclick="this.closest('.config-download').querySelector('.config-done').style.display='block'"
+					>
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+							<polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+						</svg>
+						Download { data.Device.Name }.conf
+					</a>
+					<button
+						class="btn btn-outline"
+						onclick="copyConfig(this)"
+						data-config={ data.ConfigFile }
+					>
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+						</svg>
+						Copy
+					</button>
+				</div>
+
+				<div class="config-done" style="display:none">
+					<div class="alert alert-success">
+						Config downloaded. Your device is pending admin approval — you'll be notified when it's approved.
+					</div>
+					<a href="/" class="btn btn-ghost">Back to dashboard</a>
+				</div>
+			</div>
+		</div>
+	}
+}
+

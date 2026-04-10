@@ -1,0 +1,411 @@
+package portal
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/httprate"
+	"go.uber.org/zap"
+
+	"github.com/wicket-vpn/wicket/internal/config"
+	"github.com/wicket-vpn/wicket/internal/core"
+	"github.com/wicket-vpn/wicket/internal/oidc"
+	"github.com/wicket-vpn/wicket/internal/ws"
+)
+
+const (
+	oidcStateCookie = "wicket_oidc_state"
+	oidcStateTTL    = 10 * time.Minute
+)
+
+// Handler is the public portal HTTP handler.
+type Handler struct {
+	svc      *core.Service
+	oidc     *oidc.Provider
+	sessions *SessionManager
+	hub      *ws.Hub
+	cfg      *config.Config
+	log      *zap.Logger
+}
+
+// NewHandler creates the public portal handler and wires all routes.
+func NewHandler(
+	svc *core.Service,
+	oidcProvider *oidc.Provider,
+	hub *ws.Hub,
+	cfg *config.Config,
+	log *zap.Logger,
+) http.Handler {
+	secure := cfg.Server.Environment == "production"
+
+	h := &Handler{
+		svc:      svc,
+		oidc:     oidcProvider,
+		sessions: NewSessionManager(cfg.Public.SessionSecret, cfg.Public.SessionDuration, secure),
+		hub:      hub,
+		cfg:      cfg,
+		log:      log,
+	}
+
+	r := chi.NewRouter()
+	r.Use(middleware.RealIP)
+	r.Use(middleware.RequestID)
+	r.Use(middleware.Recoverer)
+	r.Use(httprate.LimitByIP(
+		cfg.Security.RateLimitRequests,
+		cfg.Security.RateLimitWindow,
+	))
+
+	// Static files
+	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.Dir("web/public/static"))))
+
+	// Public (unauthenticated) routes
+	r.Get("/health", h.handleHealth)
+	r.Get("/auth/login", h.handleLogin)
+	r.Get("/auth/callback", h.handleCallback)
+	r.Post("/auth/logout", h.handleLogout)
+
+	// Authenticated routes
+	r.Group(func(r chi.Router) {
+		r.Use(h.sessions.Middleware("/auth/login"))
+
+		r.Get("/", h.handleDashboard)
+		r.Get("/ws", h.handleWebSocket)
+
+		r.Get("/devices/new", h.handleNewDevice)
+		r.Post("/devices", h.handleCreateDevice)
+		r.Post("/devices/{deviceID}/auto-renew", h.handleSetAutoRenew)
+
+		r.Post("/sessions", h.handleActivateSession)
+		r.Post("/sessions/group/{groupID}", h.handleActivateGroupSessions)
+		r.Post("/sessions/{sessionID}/extend", h.handleExtendSession)
+		r.Delete("/sessions/{sessionID}", h.handleRevokeSession)
+	})
+
+	return r
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Health
+// ─────────────────────────────────────────────────────────────────────────────
+
+func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
+	status := h.svc.Health(time.Time{})
+	w.Header().Set("Content-Type", "application/json")
+	if !status.Healthy {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}
+	json.NewEncoder(w).Encode(status) //nolint:errcheck
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OIDC Auth flow
+// ─────────────────────────────────────────────────────────────────────────────
+
+func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
+	authURL, state, err := h.oidc.BeginAuth()
+	if err != nil {
+		h.log.Error("beginning OIDC auth", zap.Error(err))
+		http.Error(w, "authentication unavailable", http.StatusInternalServerError)
+		return
+	}
+
+	secure := h.cfg.Server.Environment == "production"
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     oidcStateCookie,
+		Value:    state,
+		Path:     "/auth",
+		MaxAge:   int(oidcStateTTL.Seconds()),
+		HttpOnly: true,
+		Secure:   secure,
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	// Preserve the next= redirect destination through the OIDC round-trip via a cookie.
+	if next := r.URL.Query().Get("next"); next != "" {
+		http.SetCookie(w, &http.Cookie{
+			Name:     "wicket_next",
+			Value:    next,
+			Path:     "/auth",
+			MaxAge:   int(oidcStateTTL.Seconds()),
+			HttpOnly: true,
+			Secure:   secure,
+			SameSite: http.SameSiteLaxMode,
+		})
+	}
+
+	http.Redirect(w, r, authURL, http.StatusFound)
+}
+
+func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request) {
+	// Always clear the state cookie — whether we succeed or fail.
+	clearStateCookie := func() {
+		http.SetCookie(w, &http.Cookie{
+			Name: oidcStateCookie, Value: "", Path: "/auth", MaxAge: -1,
+		})
+	}
+
+	stateCookie, err := r.Cookie(oidcStateCookie)
+	if err != nil {
+		// No state cookie — stale tab or direct navigation. Restart the flow.
+		h.log.Debug("OIDC callback: no state cookie, restarting flow")
+		clearStateCookie()
+		http.Redirect(w, r, "/auth/login", http.StatusFound)
+		return
+	}
+	clearStateCookie()
+
+	claims, err := h.oidc.CompleteAuth(r.Context(), r, stateCookie.Value)
+	if err != nil {
+		// invalid_grant usually means a stale auth code (server restarted, or
+		// user clicked back and tried again). Restart the flow cleanly.
+		h.log.Warn("OIDC callback: auth failed — restarting flow", zap.Error(err))
+		http.Redirect(w, r, "/auth/login", http.StatusFound)
+		return
+	}
+
+	// Use background context so a browser redirect/cancel does not abort the DB write.
+	result, err := h.svc.HandleLogin(context.Background(), claims.Sub, claims.Email, claims.Name, clientIP(r))
+	if err != nil {
+		h.log.Error("handling login", zap.String("email", claims.Email), zap.Error(err))
+		http.Error(w, "login failed", http.StatusInternalServerError)
+		return
+	}
+
+	if err := h.sessions.Create(w, SessionData{
+		UserID:  result.User.ID,
+		Email:   result.User.Email,
+		IsAdmin: result.User.IsAdmin,
+	}); err != nil {
+		h.log.Error("creating session cookie", zap.Error(err))
+		http.Error(w, "session error", http.StatusInternalServerError)
+		return
+	}
+
+	// Check for a preserved next= destination from before the OIDC round-trip.
+	if nextCookie, err := r.Cookie("wicket_next"); err == nil && nextCookie.Value != "" {
+		// Clear the cookie.
+		http.SetCookie(w, &http.Cookie{
+			Name: "wicket_next", Value: "", Path: "/auth", MaxAge: -1,
+		})
+		http.Redirect(w, r, nextCookie.Value, http.StatusFound)
+		return
+	}
+	http.Redirect(w, r, "/", http.StatusFound)
+}
+
+func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
+	h.sessions.Clear(w)
+	http.Redirect(w, r, "/auth/login", http.StatusFound)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dashboard
+// ─────────────────────────────────────────────────────────────────────────────
+
+func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
+	session := SessionFromContext(r.Context())
+
+	devices, err := h.svc.GetDevicesForUser(r.Context(), session.UserID)
+	if err != nil {
+		h.log.Error("getting devices", zap.Error(err))
+		http.Error(w, "error loading devices", http.StatusInternalServerError)
+		return
+	}
+
+	groups, err := h.svc.ListGroupsForUser(r.Context(), session.UserID)
+	if err != nil {
+		h.log.Error("getting groups", zap.Error(err))
+		http.Error(w, "error loading groups", http.StatusInternalServerError)
+		return
+	}
+
+	renderDashboard(w, r, DashboardData{
+		Session: session,
+		Devices: devices,
+		Groups:  groups,
+	})
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Devices
+// ─────────────────────────────────────────────────────────────────────────────
+
+func (h *Handler) handleNewDevice(w http.ResponseWriter, r *http.Request) {
+	session := SessionFromContext(r.Context())
+
+	groups, err := h.svc.ListGroupsForUser(r.Context(), session.UserID)
+	if err != nil {
+		http.Error(w, "error loading groups", http.StatusInternalServerError)
+		return
+	}
+
+	renderNewDevice(w, r, NewDeviceData{Session: session, Groups: groups})
+}
+
+func (h *Handler) handleCreateDevice(w http.ResponseWriter, r *http.Request) {
+	session := SessionFromContext(r.Context())
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+
+	name := r.FormValue("name")
+	groupID := r.FormValue("group_id")
+
+	if name == "" || groupID == "" {
+		renderNewDeviceError(w, r, session, "Device name and group are required.", nil)
+		return
+	}
+
+	result, err := h.svc.CreateDevice(r.Context(), session.UserID, groupID, name, clientIP(r))
+	if err != nil {
+		h.log.Warn("creating device", zap.Error(err))
+		groups, _ := h.svc.ListGroupsForUser(r.Context(), session.UserID)
+		renderNewDeviceError(w, r, session, err.Error(), groups)
+		return
+	}
+
+	renderConfigDownload(w, r, ConfigDownloadData{
+		Session:    session,
+		Device:     result.Device,
+		ConfigFile: result.ConfigFile,
+	})
+}
+
+func (h *Handler) handleSetAutoRenew(w http.ResponseWriter, r *http.Request) {
+	session := SessionFromContext(r.Context())
+	deviceID := chi.URLParam(r, "deviceID")
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+
+	autoRenew := r.FormValue("auto_renew") == "true"
+	if err := h.svc.SetDeviceAutoRenew(r.Context(), deviceID, session.UserID, autoRenew); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Return updated device card for HTMX swap.
+	devices, err := h.svc.GetDevicesForUser(r.Context(), session.UserID)
+	if err != nil {
+		http.Error(w, "error loading device", http.StatusInternalServerError)
+		return
+	}
+	for _, d := range devices {
+		if d.ID == deviceID {
+			renderDeviceCard(w, r, d)
+			return
+		}
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sessions
+// ─────────────────────────────────────────────────────────────────────────────
+
+func (h *Handler) handleActivateSession(w http.ResponseWriter, r *http.Request) {
+	session := SessionFromContext(r.Context())
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+
+	deviceID := r.FormValue("device_id")
+	if deviceID == "" {
+		http.Error(w, "device_id required", http.StatusBadRequest)
+		return
+	}
+
+	vpnSession, err := h.svc.ActivateSession(r.Context(), deviceID, session.UserID, clientIP(r))
+	if err != nil {
+		h.log.Warn("activating session", zap.Error(err))
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	devices, err := h.svc.GetDevicesForUser(r.Context(), session.UserID)
+	if err != nil {
+		http.Error(w, "error loading device", http.StatusInternalServerError)
+		return
+	}
+	for _, d := range devices {
+		if d.ID == deviceID {
+			d.ActiveSession = vpnSession
+			renderDeviceCard(w, r, d)
+			return
+		}
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (h *Handler) handleActivateGroupSessions(w http.ResponseWriter, r *http.Request) {
+	session := SessionFromContext(r.Context())
+	groupID := chi.URLParam(r, "groupID")
+
+	if err := h.svc.ActivateGroupSessions(r.Context(), groupID, session.UserID, clientIP(r)); err != nil {
+		h.log.Warn("activating group sessions", zap.Error(err))
+	}
+
+	h.handleDashboard(w, r)
+}
+
+func (h *Handler) handleExtendSession(w http.ResponseWriter, r *http.Request) {
+	session := SessionFromContext(r.Context())
+	sessionID := chi.URLParam(r, "sessionID")
+
+	extended, err := h.svc.ExtendSession(r.Context(), sessionID, session.UserID, clientIP(r))
+	if err != nil {
+		h.log.Warn("extending session", zap.Error(err))
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	renderSessionStatus(w, r, extended)
+}
+
+func (h *Handler) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
+	session := SessionFromContext(r.Context())
+	sessionID := chi.URLParam(r, "sessionID")
+
+	if err := h.svc.RevokeSession(r.Context(), sessionID, session.UserID, clientIP(r), false); err != nil {
+		h.log.Warn("revoking session", zap.Error(err))
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WebSocket
+// ─────────────────────────────────────────────────────────────────────────────
+
+func (h *Handler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	session := SessionFromContext(r.Context())
+	h.hub.HandlePublic(w, r, session.UserID)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+func clientIP(r *http.Request) string {
+	if ip := r.Header.Get("X-Real-IP"); ip != "" {
+		return ip
+	}
+	if ip := r.Header.Get("X-Forwarded-For"); ip != "" {
+		return ip
+	}
+	return r.RemoteAddr
+}

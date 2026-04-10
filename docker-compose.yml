@@ -1,0 +1,44 @@
+services:
+  wicket:
+    build: .
+    container_name: wicket
+    restart: unless-stopped
+
+    cap_add:
+      - NET_ADMIN   # required: manage WireGuard interface and routing rules
+      - SYS_MODULE  # required: load WireGuard kernel module if not already loaded
+
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv4.conf.all.src_valid_mark=1
+
+    ports:
+      - "8080:8080/tcp"     # public portal — expose via reverse proxy
+      - "51820:51820/udp"   # WireGuard VPN
+
+    # Admin portal (9090) is intentionally NOT published here.
+    # Accessible only from host or over VPN.
+
+    volumes:
+      - ./data:/data
+      - ./config.yaml:/etc/wicket/config.yaml
+
+    environment:
+      - WICKET_WG_PRIVATE_KEY=${WICKET_WG_PRIVATE_KEY}
+      - WICKET_OIDC_CLIENT_ID=${WICKET_OIDC_CLIENT_ID}
+      - WICKET_OIDC_CLIENT_SECRET=${WICKET_OIDC_CLIENT_SECRET}
+      - WICKET_PUBLIC_SESSION_SECRET=${WICKET_PUBLIC_SESSION_SECRET}
+      - WICKET_ADMIN_HMAC_SECRET=${WICKET_ADMIN_HMAC_SECRET}
+      - WICKET_ADMIN_SESSION_SECRET=${WICKET_ADMIN_SESSION_SECRET}
+      - WICKET_SMTP_PASSWORD=${WICKET_SMTP_PASSWORD:-}
+      # Override WireGuard interface name (must match wireguard.interface in config.yaml)
+      - WICKET_WG_INTERFACE=${WICKET_WG_INTERFACE:-wg1}
+
+    healthcheck:
+      test: ["CMD", "wicket", "health", "--socket", "/var/run/wicket/core.sock"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+#    network_mode: host

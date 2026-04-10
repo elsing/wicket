@@ -1,0 +1,370 @@
+package cli
+
+import (
+	"encoding/json"
+	"fmt"
+	"net"
+	"os"
+	"text/tabwriter"
+	"time"
+
+	"github.com/spf13/cobra"
+
+	"github.com/wicket-vpn/wicket/internal/core"
+)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Socket client helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+// sendCommand sends a SocketRequest to the running server and returns the response.
+func sendCommand(command string, payload any) (*core.SocketResponse, error) {
+	conn, err := net.DialTimeout("unix", socketPath, 5*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"connecting to socket %s: %w\n  → is the server running? (wicket serve)",
+			socketPath, err,
+		)
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(15 * time.Second)) //nolint:errcheck
+
+	req := core.SocketRequest{Command: command}
+	if payload != nil {
+		b, err := json.Marshal(payload)
+		if err != nil {
+			return nil, fmt.Errorf("marshalling payload: %w", err)
+		}
+		req.Payload = b
+	}
+
+	if err := json.NewEncoder(conn).Encode(req); err != nil {
+		return nil, fmt.Errorf("sending command: %w", err)
+	}
+
+	var resp core.SocketResponse
+	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
+		return nil, fmt.Errorf("reading response: %w", err)
+	}
+
+	return &resp, nil
+}
+
+// mustOK prints the error and exits if the response is not OK.
+func mustOK(resp *core.SocketResponse) {
+	if !resp.OK {
+		fmt.Fprintln(os.Stderr, "error:", resp.Error)
+		os.Exit(1)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// session commands
+// ─────────────────────────────────────────────────────────────────────────────
+
+var sessionCmd = &cobra.Command{
+	Use:   "session",
+	Short: "Manage VPN sessions",
+}
+
+var sessionListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List all active sessions",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		resp, err := sendCommand("session.list", nil)
+		if err != nil {
+			return err
+		}
+		mustOK(resp)
+
+		b, _ := json.MarshalIndent(resp.Data, "", "  ")
+		fmt.Println(string(b))
+		return nil
+	},
+}
+
+var (
+	sessionRevokeID string
+)
+
+var sessionRevokeCmd = &cobra.Command{
+	Use:   "revoke",
+	Short: "Revoke a session by ID",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if sessionRevokeID == "" {
+			return fmt.Errorf("--id is required")
+		}
+		resp, err := sendCommand("session.revoke", map[string]string{"session_id": sessionRevokeID})
+		if err != nil {
+			return err
+		}
+		mustOK(resp)
+		fmt.Println("Session revoked.")
+		return nil
+	},
+}
+
+var (
+	sessionExtendID       string
+	sessionExtendDuration string
+)
+
+var sessionExtendCmd = &cobra.Command{
+	Use:   "extend",
+	Short: "Extend a session (admin override, no limit)",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if sessionExtendID == "" {
+			return fmt.Errorf("--id is required")
+		}
+		if sessionExtendDuration == "" {
+			return fmt.Errorf("--duration is required (e.g. 24h)")
+		}
+		resp, err := sendCommand("session.extend", map[string]string{
+			"session_id": sessionExtendID,
+			"duration":   sessionExtendDuration,
+		})
+		if err != nil {
+			return err
+		}
+		mustOK(resp)
+		fmt.Println("Session extended.")
+		return nil
+	},
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// device commands
+// ─────────────────────────────────────────────────────────────────────────────
+
+var deviceCmd = &cobra.Command{
+	Use:   "device",
+	Short: "Manage devices",
+}
+
+var (
+	deviceListPending bool
+)
+
+var deviceListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List devices",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		resp, err := sendCommand("device.list", map[string]bool{"pending": deviceListPending})
+		if err != nil {
+			return err
+		}
+		mustOK(resp)
+
+		b, _ := json.MarshalIndent(resp.Data, "", "  ")
+		fmt.Println(string(b))
+		return nil
+	},
+}
+
+var deviceApproveID string
+
+var deviceApproveCmd = &cobra.Command{
+	Use:   "approve",
+	Short: "Approve a pending device",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if deviceApproveID == "" {
+			return fmt.Errorf("--id is required")
+		}
+		resp, err := sendCommand("device.approve", map[string]string{"device_id": deviceApproveID})
+		if err != nil {
+			return err
+		}
+		mustOK(resp)
+		fmt.Println("Device approved.")
+		return nil
+	},
+}
+
+var deviceRejectID string
+
+var deviceRejectCmd = &cobra.Command{
+	Use:   "reject",
+	Short: "Reject and delete a pending device",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if deviceRejectID == "" {
+			return fmt.Errorf("--id is required")
+		}
+		resp, err := sendCommand("device.reject", map[string]string{"device_id": deviceRejectID})
+		if err != nil {
+			return err
+		}
+		mustOK(resp)
+		fmt.Println("Device rejected and deleted.")
+		return nil
+	},
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// user commands
+// ─────────────────────────────────────────────────────────────────────────────
+
+var userCmd = &cobra.Command{
+	Use:   "user",
+	Short: "Manage users",
+}
+
+var userListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List all users",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		resp, err := sendCommand("user.list", nil)
+		if err != nil {
+			return err
+		}
+		mustOK(resp)
+
+		// Pretty-print as a table.
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "ID\tEMAIL\tDISPLAY NAME\tADMIN\tACTIVE")
+
+		// Parse the raw data as a JSON array then iterate.
+		b, _ := json.Marshal(resp.Data)
+		var users []struct {
+			ID          string `json:"id"`
+			Email       string `json:"email"`
+			DisplayName string `json:"display_name"`
+			IsAdmin     bool   `json:"is_admin"`
+			IsActive    bool   `json:"is_active"`
+		}
+		if err := json.Unmarshal(b, &users); err != nil {
+			fmt.Println(string(b))
+			return nil
+		}
+		for _, u := range users {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%v\t%v\n",
+				u.ID[:8]+"…", u.Email, u.DisplayName, u.IsAdmin, u.IsActive)
+		}
+		return w.Flush()
+	},
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// reconcile command
+// ─────────────────────────────────────────────────────────────────────────────
+
+var reconcileCmd = &cobra.Command{
+	Use:   "reconcile",
+	Short: "Trigger an immediate reconciliation pass",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		resp, err := sendCommand("reconcile", nil)
+		if err != nil {
+			return err
+		}
+		mustOK(resp)
+		fmt.Println("Reconcile triggered.")
+		return nil
+	},
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// health command
+// ─────────────────────────────────────────────────────────────────────────────
+
+var healthCmd = &cobra.Command{
+	Use:   "health",
+	Short: "Check server health",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		resp, err := sendCommand("health", nil)
+		if err != nil {
+			return err
+		}
+		mustOK(resp)
+		b, _ := json.MarshalIndent(resp.Data, "", "  ")
+		fmt.Println(string(b))
+		return nil
+	},
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// init — wire everything up
+// ─────────────────────────────────────────────────────────────────────────────
+
+func init() {
+	// session subcommands
+	sessionRevokeCmd.Flags().StringVar(&sessionRevokeID, "id", "", "session ID to revoke")
+	sessionExtendCmd.Flags().StringVar(&sessionExtendID, "id", "", "session ID to extend")
+	sessionExtendCmd.Flags().StringVar(&sessionExtendDuration, "duration", "24h", "how long to extend by (e.g. 24h, 12h)")
+	sessionCmd.AddCommand(sessionListCmd, sessionRevokeCmd, sessionExtendCmd)
+
+	// device subcommands
+	deviceListCmd.Flags().BoolVar(&deviceListPending, "pending", false, "show only pending devices")
+	deviceApproveCmd.Flags().StringVar(&deviceApproveID, "id", "", "device ID to approve")
+	deviceRejectCmd.Flags().StringVar(&deviceRejectID, "id", "", "device ID to reject")
+	deviceCmd.AddCommand(deviceListCmd, deviceApproveCmd, deviceRejectCmd)
+
+	// user subcommands
+	userCmd.AddCommand(userListCmd)
+
+	// root subcommands
+	rootCmd.AddCommand(sessionCmd, deviceCmd, userCmd, reconcileCmd, healthCmd)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// make-admin command
+// ─────────────────────────────────────────────────────────────────────────────
+
+var makeAdminEmail string
+
+var makeAdminCmd = &cobra.Command{
+	Use:   "make-admin",
+	Short: "Grant admin privileges to a user by email",
+	Long:  "Use this to bootstrap the first admin user after initial login.",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if makeAdminEmail == "" {
+			return fmt.Errorf("--email is required")
+		}
+		resp, err := sendCommand("user.make-admin", map[string]string{"email": makeAdminEmail})
+		if err != nil {
+			return err
+		}
+		mustOK(resp)
+		fmt.Printf("✓ %s is now an admin.\n", makeAdminEmail)
+		return nil
+	},
+}
+
+func init() {
+	makeAdminCmd.Flags().StringVar(&makeAdminEmail, "email", "", "email address of the user to promote")
+	rootCmd.AddCommand(makeAdminCmd)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// create-local-admin command
+// ─────────────────────────────────────────────────────────────────────────────
+
+var (
+	localAdminUser string
+	localAdminPass string
+)
+
+var createLocalAdminCmd = &cobra.Command{
+	Use:   "create-local-admin",
+	Short: "Create a local admin account for emergency fallback access",
+	Long:  "Creates a username/password account usable on the admin portal when OIDC is unavailable.",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if localAdminUser == "" || localAdminPass == "" {
+			return fmt.Errorf("--username and --password are required")
+		}
+		resp, err := sendCommand("admin.create-local", map[string]string{
+			"username": localAdminUser,
+			"password": localAdminPass,
+		})
+		if err != nil {
+			return err
+		}
+		mustOK(resp)
+		fmt.Printf("✓ Local admin account %q created.\n", localAdminUser)
+		return nil
+	},
+}
+
+func init() {
+	createLocalAdminCmd.Flags().StringVar(&localAdminUser, "username", "", "username for local admin account")
+	createLocalAdminCmd.Flags().StringVar(&localAdminPass, "password", "", "password for local admin account")
+	rootCmd.AddCommand(createLocalAdminCmd)
+}

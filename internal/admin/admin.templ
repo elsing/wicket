@@ -1,0 +1,643 @@
+package admin
+
+import (
+	"github.com/wicket-vpn/wicket/internal/db"
+	"github.com/wicket-vpn/wicket/internal/portal"
+	"github.com/wicket-vpn/wicket/internal/ws"
+)
+
+templ AdminLayout(title string, session *portal.SessionData, activeNav string) {
+	<!DOCTYPE html>
+	<html lang="en" data-theme="auto">
+	<head>
+		<meta charset="UTF-8"/>
+		<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+		<title>{ title } — Wicket Admin</title>
+		<link rel="preconnect" href="https://fonts.googleapis.com"/>
+		<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"/>
+		<script src="https://unpkg.com/htmx.org@2.0.0/dist/htmx.min.js" defer></script>
+		<script src="https://unpkg.com/htmx-ext-ws@2.0.0/ws.js" defer></script>
+		<link rel="stylesheet" href="/static/css/admin.css"/>
+	</head>
+	<body hx-ext="ws" ws-connect="/ws">
+	<div class="admin-shell">
+		<aside class="sidebar">
+			<div class="sidebar-brand">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+				</svg>
+				<span>Wicket</span>
+			</div>
+			<nav class="sidebar-nav">
+				@navItem("/", "dashboard", activeNav, "Dashboard")
+				@navItem("/devices", "devices", activeNav, "Devices")
+				@navItem("/sessions", "sessions", activeNav, "Sessions")
+				@navItem("/users", "users", activeNav, "Users")
+				@navItem("/groups", "groups", activeNav, "Groups")
+				@navItem("/subnets", "subnets", activeNav, "Subnets")
+				@navItem("/agents", "agents", activeNav, "Agents")
+				@navItem("/metrics", "metrics", activeNav, "Metrics")
+				@navItem("/audit", "audit", activeNav, "Audit Log")
+			</nav>
+			<div class="sidebar-footer">
+				if session != nil {
+					<div class="sidebar-user">
+						<div class="sidebar-user-avatar">{ firstChar(session.Email) }</div>
+						<div class="sidebar-user-info">
+							<div class="sidebar-user-email">{ session.Email }</div>
+							<div class="sidebar-user-role">Administrator</div>
+						</div>
+					</div>
+				}
+				<button class="theme-toggle-sidebar" onclick="toggleTheme()" title="Toggle theme">
+					<svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/></svg>
+					<svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+				</button>
+			</div>
+		</aside>
+
+		<div class="admin-content">
+			<header class="admin-header">
+				<h1 class="admin-page-title">{ title }</h1>
+				<div class="admin-header-actions">
+					<div class="live-indicator">
+						<div class="live-dot"></div>
+						<span>Live</span>
+					</div>
+				</div>
+			</header>
+			<main class="admin-main">
+				{ children... }
+			</main>
+		</div>
+	</div>
+	<script src="/static/js/admin.js"></script>
+	</body>
+	</html>
+}
+
+templ navItem(href, key, activeNav, label string) {
+	<a href={ templ.SafeURL(href) } class={ "nav-item", templ.KV("nav-item-active", key == activeNav) }>
+		<span>{ label }</span>
+	</a>
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dashboard
+// ─────────────────────────────────────────────────────────────────────────────
+
+templ AdminDashboardPage(data AdminDashboardData) {
+	@AdminLayout("Dashboard", data.Session, "dashboard") {
+		<div class="stats-grid">
+			<div class="stat-card card">
+				<div class="stat-label">Pending Approvals</div>
+				<div class="stat-value stat-warning">{ itoa(len(data.PendingDevices)) }</div>
+			</div>
+			<div class="stat-card card">
+				<div class="stat-label">Active Sessions</div>
+				<div class="stat-value stat-success">{ itoa(len(data.ActiveSessions)) }</div>
+			</div>
+			<div class="stat-card card">
+				<div class="stat-label">Connected Agents</div>
+				<div class="stat-value">{ itoa(data.WSCounts[ws.KindAgent]) }</div>
+			</div>
+			<div class="stat-card card">
+				<div class="stat-label">Users Online</div>
+				<div class="stat-value">{ itoa(data.WSCounts[ws.KindPublic]) }</div>
+			</div>
+		</div>
+
+		if len(data.PendingDevices) > 0 {
+			<section class="dashboard-section">
+				<h2>Pending Approvals <span class="badge badge-warning">{ itoa(len(data.PendingDevices)) }</span></h2>
+				<div id="pending-devices">
+					@PendingDevicesTable(data.PendingDevices)
+				</div>
+			</section>
+		}
+
+		<section class="dashboard-section">
+			<h2>Active Sessions</h2>
+			<div class="table-wrap card">
+				<table class="table">
+					<thead><tr><th>Device</th><th>IP</th><th>Expires</th><th>Actions</th></tr></thead>
+					<tbody>
+						for _, s := range data.ActiveSessions {
+							<tr id={ "session-" + s.ID }>
+								<td>{ s.DeviceID }</td>
+								<td class="text-muted">{ s.IPAddress }</td>
+								<td>{ s.ExpiresAt.Format("02 Jan 15:04") }</td>
+								<td>
+									<button
+										class="btn btn-sm btn-ghost"
+										hx-post={ "/sessions/" + s.ID + "/revoke" }
+										hx-target={ "#session-" + s.ID }
+										hx-swap="delete"
+										hx-confirm="Revoke this session?"
+									>Revoke</button>
+								</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			</div>
+		</section>
+	}
+}
+
+templ PendingDevicesTable(devices []*db.Device) {
+	<div class="table-wrap card">
+		<table class="table">
+			<thead><tr><th>Device</th><th>Requested</th><th>Actions</th></tr></thead>
+			<tbody>
+				for _, dev := range devices {
+					<tr id={ "pending-" + dev.ID }>
+						<td class="font-medium">{ dev.Name }</td>
+						<td class="text-muted">{ dev.CreatedAt.Format("02 Jan 15:04") }</td>
+						<td class="table-actions">
+							<button
+								class="btn btn-sm btn-primary"
+								hx-post={ "/devices/" + dev.ID + "/approve" }
+								hx-target="#pending-devices"
+								hx-swap="innerHTML"
+							>Approve</button>
+							<button
+								class="btn btn-sm btn-ghost"
+								hx-post={ "/devices/" + dev.ID + "/reject" }
+								hx-target="#pending-devices"
+								hx-swap="innerHTML"
+								hx-confirm={ "Reject \"" + dev.Name + "\"?" }
+							>Reject</button>
+						</td>
+					</tr>
+				}
+			</tbody>
+		</table>
+	</div>
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Subnets
+// ─────────────────────────────────────────────────────────────────────────────
+
+templ AdminSubnetsPage(data AdminSubnetsData) {
+	@AdminLayout("Subnets", data.Session, "subnets") {
+		<div class="two-col">
+			<div class="table-wrap card">
+				<table class="table">
+					<thead><tr><th>Name</th><th>CIDR</th><th>Description</th><th></th></tr></thead>
+					<tbody id="subnet-list">
+						for _, s := range data.Subnets {
+							<tr>
+								<td class="font-medium">{ s.Name }</td>
+								<td><code>{ s.CIDR }</code></td>
+								<td class="text-muted">{ s.Description }</td>
+								<td>
+									<button
+										class="btn btn-sm btn-ghost"
+										hx-delete={ "/subnets/" + s.ID }
+										hx-target="closest tr"
+										hx-swap="delete"
+										hx-confirm={ "Delete \"" + s.Name + "\"?" }
+									>Delete</button>
+								</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			</div>
+			<div class="card form-panel">
+				<h3>Add Subnet</h3>
+				<form hx-post="/subnets" hx-target="#subnet-list" hx-swap="innerHTML" class="form">
+					<div class="form-field">
+						<label>Name</label>
+						<input type="text" name="name" class="input" placeholder="office-lan" required/>
+					</div>
+					<div class="form-field">
+						<label>CIDR</label>
+						<input type="text" name="cidr" class="input" placeholder="10.0.10.0/24" required/>
+					</div>
+					<div class="form-field">
+						<label>Description</label>
+						<input type="text" name="description" class="input" placeholder="Office LAN"/>
+					</div>
+					<button type="submit" class="btn btn-primary">Add Subnet</button>
+				</form>
+			</div>
+		</div>
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Audit log
+// ─────────────────────────────────────────────────────────────────────────────
+
+templ AdminAuditPage(data AdminAuditData) {
+	@AdminLayout("Audit Log", data.Session, "audit") {
+		<div class="table-wrap card">
+			<table class="table table-sm">
+				<thead><tr><th>Time</th><th>Event</th><th>IP</th></tr></thead>
+				<tbody>
+					for _, entry := range data.Entries {
+						<tr>
+							<td class="text-muted text-sm">{ entry.CreatedAt.Format("02 Jan 15:04:05") }</td>
+							<td><span class={ "event-badge", eventClass(entry.Event) }>{ entry.Event }</span></td>
+							<td class="text-muted text-sm">{ entry.IPAddress }</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+		</div>
+	}
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Devices page
+// ─────────────────────────────────────────────────────────────────────────────
+
+templ AdminDevicesPage(data AdminDevicesData) {
+	@AdminLayout("Devices", data.Session, "devices") {
+		<div class="page-header">
+			<p class="page-desc">All registered devices. Approve or reject pending requests, disable active devices.</p>
+		</div>
+		<div class="table-wrap card">
+			<table class="table">
+				<thead>
+					<tr>
+						<th>Name</th>
+						<th>User</th>
+						<th>Group</th>
+						<th>IP</th>
+						<th>Status</th>
+						<th>Actions</th>
+					</tr>
+				</thead>
+				<tbody>
+					for _, dev := range data.Devices {
+						<tr id={ "dev-" + dev.ID }>
+							<td class="font-medium">{ dev.Name }</td>
+							<td class="text-muted">{ dev.UserID }</td>
+							<td class="text-muted">{ dev.GroupID }</td>
+							<td><code>{ dev.AssignedIP }</code></td>
+							<td>
+								if !dev.IsApproved {
+									<span class="badge badge-warning">Pending</span>
+								} else if !dev.IsActive {
+									<span class="badge badge-error">Disabled</span>
+								} else {
+									<span class="badge badge-success">Active</span>
+								}
+							</td>
+							<td class="table-actions">
+								if !dev.IsApproved {
+									<button class="btn btn-sm btn-primary"
+										hx-post={ "/devices/" + dev.ID + "/approve" }
+										hx-target={ "#dev-" + dev.ID } hx-swap="delete">Approve</button>
+									<button class="btn btn-sm btn-ghost"
+										hx-post={ "/devices/" + dev.ID + "/reject" }
+										hx-target={ "#dev-" + dev.ID } hx-swap="delete"
+										hx-confirm={ "Reject \"" + dev.Name + "\"?" }>Reject</button>
+								} else if dev.IsActive {
+									<button class="btn btn-sm btn-ghost"
+										hx-post={ "/devices/" + dev.ID + "/disable" }
+										hx-target={ "#dev-" + dev.ID } hx-swap="outerHTML"
+										hx-confirm={ "Disable \"" + dev.Name + "\"?" }>Disable</button>
+								} else {
+									<button class="btn btn-sm btn-outline"
+										hx-post={ "/devices/" + dev.ID + "/enable" }
+										hx-target={ "#dev-" + dev.ID } hx-swap="outerHTML">Enable</button>
+								}
+							</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+		</div>
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sessions page
+// ─────────────────────────────────────────────────────────────────────────────
+
+templ AdminSessionsPage(data AdminSessionsData) {
+	@AdminLayout("Sessions", data.Session, "sessions") {
+		<div class="page-header">
+			<p class="page-desc">Currently active VPN sessions. Revoke or extend as needed.</p>
+		</div>
+		<div class="table-wrap card">
+			<table class="table">
+				<thead>
+					<tr><th>Device</th><th>IP</th><th>Started</th><th>Expires</th><th>Extensions</th><th>Actions</th></tr>
+				</thead>
+				<tbody id="sessions-table">
+					for _, s := range data.Sessions {
+						<tr id={ "session-row-" + s.ID }>
+							<td class="font-medium">{ s.DeviceID }</td>
+							<td class="text-muted">{ s.IPAddress }</td>
+							<td class="text-muted">{ s.AuthedAt.Format("02 Jan 15:04") }</td>
+							<td>{ s.ExpiresAt.Format("02 Jan 15:04") }</td>
+							<td class="text-muted">{ itoa(s.ExtensionCount) }</td>
+							<td class="table-actions">
+								<button class="btn btn-sm btn-outline"
+									hx-post={ "/sessions/" + s.ID + "/extend" }
+									hx-vals='{"duration":"24h"}'
+									hx-target={ "#session-row-" + s.ID } hx-swap="outerHTML">+24h</button>
+								<button class="btn btn-sm btn-ghost"
+									hx-post={ "/sessions/" + s.ID + "/revoke" }
+									hx-target={ "#session-row-" + s.ID } hx-swap="delete"
+									hx-confirm="Revoke this session?">Revoke</button>
+							</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+		</div>
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Users page
+// ─────────────────────────────────────────────────────────────────────────────
+
+templ AdminUsersPage(data AdminUsersData) {
+	@AdminLayout("Users", data.Session, "users") {
+		<div class="page-header">
+			<p class="page-desc">Users are created automatically on first login. Grant admin access or assign to groups here.</p>
+		</div>
+		<div class="table-wrap card">
+			<table class="table">
+				<thead>
+					<tr><th>Email</th><th>Display Name</th><th>Admin</th><th>Active</th><th>Last Login</th><th>Actions</th></tr>
+				</thead>
+				<tbody>
+					for _, u := range data.Users {
+						<tr id={ "user-" + u.ID }>
+							<td class="font-medium">{ u.Email }</td>
+							<td class="text-muted">{ u.DisplayName }</td>
+							<td>
+								if u.IsAdmin {
+									<span class="badge badge-success">Admin</span>
+								} else {
+									<span class="badge badge-muted">User</span>
+								}
+							</td>
+							<td>
+								if u.IsActive {
+									<span class="badge badge-success">Active</span>
+								} else {
+									<span class="badge badge-error">Inactive</span>
+								}
+							</td>
+							<td class="text-muted">
+								if u.LastLoginAt.Valid {
+									{ u.LastLoginAt.Time.Format("02 Jan 15:04") }
+								} else {
+									Never
+								}
+							</td>
+							<td class="table-actions">
+								if !u.IsAdmin {
+									<button class="btn btn-sm btn-outline"
+										hx-post={ "/users/" + u.ID + "/toggle-admin" }
+										hx-target={ "#user-" + u.ID } hx-swap="outerHTML">Make Admin</button>
+								} else {
+									<button class="btn btn-sm btn-ghost"
+										hx-post={ "/users/" + u.ID + "/toggle-admin" }
+										hx-target={ "#user-" + u.ID } hx-swap="outerHTML">Remove Admin</button>
+								}
+							</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+		</div>
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Groups page
+// ─────────────────────────────────────────────────────────────────────────────
+
+templ AdminGroupsPage(data AdminGroupsData) {
+	@AdminLayout("Groups", data.Session, "groups") {
+		<div class="two-col">
+			<div class="table-wrap card">
+				<table class="table">
+					<thead>
+						<tr><th>Name</th><th>Session Duration</th><th>Max Extensions</th><th>Public</th></tr>
+					</thead>
+					<tbody id="groups-table">
+						for _, g := range data.Groups {
+							<tr>
+								<td class="font-medium">{ g.Name }</td>
+								<td>{ g.SessionDuration.String() }</td>
+								<td>
+									if g.MaxExtensions.Valid {
+										{ itoa(int(g.MaxExtensions.Int64)) }
+									} else {
+										Unlimited
+									}
+								</td>
+								<td>
+									if g.IsPublic {
+										<span class="badge badge-success">Public</span>
+									} else {
+										<span class="badge badge-muted">Restricted</span>
+									}
+								</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			</div>
+			<div class="card form-panel">
+				<h3>Create Group</h3>
+				<form hx-post="/groups" hx-target="#groups-table" hx-swap="innerHTML" class="form">
+					<div class="form-field">
+						<label>Name</label>
+						<input type="text" name="name" class="input" placeholder="engineering" required/>
+					</div>
+					<div class="form-field">
+						<label>Description</label>
+						<input type="text" name="description" class="input" placeholder="Engineering team"/>
+					</div>
+					<div class="form-field">
+						<label>Session Duration</label>
+						<input type="text" name="session_duration" class="input" placeholder="24h" value="24h"/>
+						<p class="form-hint">e.g. 8h, 24h, 168h</p>
+					</div>
+					<div class="form-field">
+						<label class="toggle-label">
+							<input type="checkbox" name="is_public" value="true" class="toggle"/>
+							<span>Public (any user can select)</span>
+						</label>
+					</div>
+					<button type="submit" class="btn btn-primary">Create Group</button>
+				</form>
+			</div>
+		</div>
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Agents page
+// ─────────────────────────────────────────────────────────────────────────────
+
+templ AdminAgentsPage(data AdminAgentsData) {
+	@AdminLayout("Agents", data.Session, "agents") {
+		<div class="page-header">
+			<p class="page-desc">Remote WireGuard agents. Each agent manages its own WireGuard interface and receives peer updates from the core.</p>
+		</div>
+		<div class="two-col">
+			<div class="table-wrap card">
+				<table class="table">
+					<thead>
+						<tr><th>Name</th><th>Status</th><th>Last Seen</th><th>Actions</th></tr>
+					</thead>
+					<tbody>
+						for _, a := range data.Agents {
+							<tr>
+								<td class="font-medium">{ a.Name }</td>
+								<td>
+									if a.IsActive {
+										<span class="badge badge-success">Active</span>
+									} else {
+										<span class="badge badge-muted">Revoked</span>
+									}
+								</td>
+								<td class="text-muted">
+									if a.LastSeenAt.Valid {
+										{ a.LastSeenAt.Time.Format("02 Jan 15:04") }
+									} else {
+										Never connected
+									}
+								</td>
+								<td>
+									if a.IsActive {
+										<button class="btn btn-sm btn-ghost"
+											hx-delete={ "/agents/" + a.ID }
+											hx-target="closest tr" hx-swap="delete"
+											hx-confirm={ "Revoke agent \"" + a.Name + "\"?" }>Revoke</button>
+									}
+								</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			</div>
+			<div class="card form-panel">
+				<h3>Register Agent</h3>
+				<p class="form-hint" style="margin-bottom:14px">The token is shown once after creation. Store it securely.</p>
+				<form hx-post="/agents" hx-target="#agent-token-result" hx-swap="innerHTML" class="form">
+					<div class="form-field">
+						<label>Name</label>
+						<input type="text" name="name" class="input" placeholder="agent-lon-01" required/>
+					</div>
+					<div class="form-field">
+						<label>Description</label>
+						<input type="text" name="description" class="input" placeholder="London datacenter"/>
+					</div>
+					<button type="submit" class="btn btn-primary">Register Agent</button>
+				</form>
+				<div id="agent-token-result" style="margin-top:16px"></div>
+			</div>
+		</div>
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Metrics page
+// ─────────────────────────────────────────────────────────────────────────────
+
+templ AdminMetricsPage(data AdminMetricsData) {
+	@AdminLayout("Metrics", data.Session, "metrics") {
+		<div class="page-header">
+			<p class="page-desc">Per-device traffic and connection statistics, sampled every 30 seconds.</p>
+		</div>
+		<div class="table-wrap card">
+			<table class="table">
+				<thead>
+					<tr><th>Device</th><th>Assigned IP</th><th>Traffic (7d chart)</th></tr>
+				</thead>
+				<tbody>
+					for _, dev := range data.Devices {
+						if dev.IsApproved && dev.IsActive {
+							<tr>
+								<td class="font-medium">{ dev.Name }</td>
+								<td><code>{ dev.AssignedIP }</code></td>
+								<td>
+									<div id={ "chart-" + dev.ID }
+										class="metrics-chart"
+										data-device-id={ dev.ID }
+										style="height:40px;min-width:200px">
+									</div>
+								</td>
+							</tr>
+						}
+					}
+				</tbody>
+			</table>
+		</div>
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Local login page (fallback when OIDC is unavailable)
+// ─────────────────────────────────────────────────────────────────────────────
+
+templ AdminLocalLoginPage(errorMsg string) {
+	<!DOCTYPE html>
+	<html lang="en" data-theme="auto">
+	<head>
+		<meta charset="UTF-8"/>
+		<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+		<title>Wicket Admin — Sign in</title>
+		<link rel="preconnect" href="https://fonts.googleapis.com"/>
+		<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"/>
+		<link rel="stylesheet" href="/static/css/admin.css"/>
+	</head>
+	<body>
+	<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px">
+		<div class="card" style="width:100%;max-width:380px;padding:40px 36px;text-align:center">
+			<svg style="width:40px;height:40px;color:var(--primary);margin:0 auto 20px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+				<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+			</svg>
+			<h1 style="font-size:20px;font-weight:600;margin:0 0 6px">Wicket Admin</h1>
+			<p style="color:var(--text-2);font-size:13px;margin:0 0 28px">Sign in with SSO or use a local admin account.</p>
+
+			if errorMsg != "" {
+				<div class="alert alert-error" style="margin-bottom:20px;text-align:left">{ errorMsg }</div>
+			}
+
+			<a href="/auth/sso" class="btn btn-primary" style="width:100%;justify-content:center;margin-bottom:16px">
+				Sign in with SSO
+			</a>
+
+			<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+				<div style="flex:1;height:1px;background:var(--border)"></div>
+				<span style="font-size:12px;color:var(--text-3)">or local account</span>
+				<div style="flex:1;height:1px;background:var(--border)"></div>
+			</div>
+
+			<form method="POST" action="/auth/local" class="form" style="text-align:left">
+				<div class="form-field">
+					<label>Username</label>
+					<input type="text" name="username" class="input" placeholder="admin" autocomplete="username" required/>
+				</div>
+				<div class="form-field">
+					<label>Password</label>
+					<input type="password" name="password" class="input" autocomplete="current-password" required/>
+				</div>
+				<button type="submit" class="btn btn-outline" style="width:100%;justify-content:center;margin-top:4px">Sign in</button>
+			</form>
+		</div>
+	</div>
+	<script>
+		const stored = localStorage.getItem('theme');
+		if (stored) document.documentElement.setAttribute('data-theme', stored);
+	</script>
+	</body>
+	</html>
+}
