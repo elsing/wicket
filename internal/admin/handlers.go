@@ -201,7 +201,6 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
-
 func (h *Handler) handleLocalLogin(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		renderAdminLoginPage(w, r, "Invalid request")
@@ -287,7 +286,12 @@ func (h *Handler) handleApproveDevice(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	h.handlePendingDevices(w, r)
+	// Return updated row — device is now approved so it disappears from pending
+	// and the target #dev-{id} gets deleted
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// Empty response with 200 causes HTMX to delete the target element
+	// since we swapped to outerHTML and return empty = element removed
+	h.renderDeviceRow(w, r, deviceID)
 }
 
 func (h *Handler) handleRejectDevice(w http.ResponseWriter, r *http.Request) {
@@ -298,7 +302,7 @@ func (h *Handler) handleRejectDevice(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	h.handlePendingDevices(w, r)
+	w.WriteHeader(http.StatusOK) // hx-swap="delete" handles removal
 }
 
 func (h *Handler) handleDisableDevice(w http.ResponseWriter, r *http.Request) {
@@ -309,7 +313,7 @@ func (h *Handler) handleDisableDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.svc.WriteAuditLog(r.Context(), deviceID, sess.UserID, "device.disabled", clientIP(r))
-	w.WriteHeader(http.StatusOK)
+	h.renderDeviceRow(w, r, deviceID)
 }
 
 func (h *Handler) handleEnableDevice(w http.ResponseWriter, r *http.Request) {
@@ -320,7 +324,7 @@ func (h *Handler) handleEnableDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.svc.WriteAuditLog(r.Context(), deviceID, sess.UserID, "device.enabled", clientIP(r))
-	w.WriteHeader(http.StatusOK)
+	h.renderDeviceRow(w, r, deviceID)
 }
 
 func (h *Handler) handleSessions(w http.ResponseWriter, r *http.Request) {
@@ -380,11 +384,14 @@ func (h *Handler) handleToggleAdmin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	// Return updated row
-	users, _ := h.svc.ListUsers(r.Context())
-	groups, _ := h.svc.ListAllGroups(r.Context())
-	sess := portal.SessionFromContext(r.Context())
-	renderAdminUsers(w, r, AdminUsersData{Session: sess, Users: users, Groups: groups})
+	// Return just the updated row
+	updated, err := h.svc.DB().GetUserByID(r.Context(), userID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	UserRow(updated).Render(r.Context(), w) //nolint:errcheck
 }
 
 func (h *Handler) handleAssignGroup(w http.ResponseWriter, r *http.Request) {
@@ -444,7 +451,7 @@ func (h *Handler) handleAssignGroupSubnet(w http.ResponseWriter, r *http.Request
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	h.handleGroups(w, r)
+	h.renderGroupCard(w, r, groupID)
 }
 
 func (h *Handler) handleRemoveGroupSubnet(w http.ResponseWriter, r *http.Request) {
@@ -453,7 +460,7 @@ func (h *Handler) handleRemoveGroupSubnet(w http.ResponseWriter, r *http.Request
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	h.handleGroups(w, r)
+	h.renderGroupCard(w, r, groupID)
 }
 
 func (h *Handler) handleSubnets(w http.ResponseWriter, r *http.Request) {
@@ -553,6 +560,32 @@ func (h *Handler) handleDeviceMetrics(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	sess := portal.SessionFromContext(r.Context())
 	h.hub.HandleAdmin(w, r, sess.UserID)
+}
+
+// renderDeviceRow fetches a device and renders its updated table row.
+func (h *Handler) renderDeviceRow(w http.ResponseWriter, r *http.Request, deviceID string) {
+	devices, _ := h.svc.DB().ListAllDevices(r.Context())
+	subnets, _ := h.svc.ListAllSubnets(r.Context())
+	_ = subnets
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	for _, dev := range devices {
+		if dev.ID == deviceID {
+			DeviceRow(dev).Render(r.Context(), w) //nolint:errcheck
+			return
+		}
+	}
+}
+
+// renderGroupCard fetches current group data and renders just that card.
+func (h *Handler) renderGroupCard(w http.ResponseWriter, r *http.Request, groupID string) {
+	groups, _ := h.svc.ListAllGroups(r.Context())
+	subnets, _ := h.svc.ListAllSubnets(r.Context())
+	groupSubnets, _ := h.svc.DB().ListGroupSubnets(r.Context())
+	renderGroupCard(w, r, AdminGroupsData{
+		Groups:       groups,
+		Subnets:      subnets,
+		GroupSubnets: groupSubnets,
+	}, groupID)
 }
 
 func (h *Handler) handleDeleteDevice(w http.ResponseWriter, r *http.Request) {

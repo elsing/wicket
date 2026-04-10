@@ -16,10 +16,9 @@ templ AdminLayout(title string, session *portal.SessionData, activeNav string) {
 		<link rel="preconnect" href="https://fonts.googleapis.com"/>
 		<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"/>
 		<script src="https://unpkg.com/htmx.org@2.0.0/dist/htmx.min.js" defer></script>
-		<script src="https://unpkg.com/htmx-ext-ws@2.0.0/ws.js" defer></script>
 		<link rel="stylesheet" href="/static/css/admin.css"/>
 	</head>
-	<body hx-ext="ws" ws-connect="/ws">
+	<body>
 	<div class="admin-shell">
 		<aside class="sidebar">
 			<div class="sidebar-brand">
@@ -228,6 +227,25 @@ templ AdminSubnetsPage(data AdminSubnetsData) {
 	}
 }
 
+// SubnetRows renders just the subnet table rows for HTMX swaps.
+templ SubnetRows(data AdminSubnetsData) {
+	for _, s := range data.Subnets {
+		<tr>
+			<td class="font-medium">{ s.Name }</td>
+			<td><code>{ s.CIDR }</code></td>
+			<td class="text-muted">{ s.Description }</td>
+			<td>
+				<button
+					class="btn btn-sm btn-ghost"
+					hx-delete={ "/subnets/" + s.ID }
+					hx-target="closest tr"
+					hx-swap="delete"
+					hx-confirm={ "Delete \"" + s.Name + "\"?" }>Delete</button>
+			</td>
+		</tr>
+	}
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Audit log
 // ─────────────────────────────────────────────────────────────────────────────
@@ -317,6 +335,49 @@ templ AdminDevicesPage(data AdminDevicesData) {
 	}
 }
 
+// DeviceRow renders a single device table row for HTMX outerHTML swaps.
+templ DeviceRow(dev *db.Device) {
+	<tr id={ "dev-" + dev.ID }>
+		<td class="font-medium">{ dev.Name }</td>
+		<td class="text-muted">{ dev.UserID }</td>
+		<td class="text-muted">{ dev.GroupID }</td>
+		<td><code>{ dev.AssignedIP }</code></td>
+		<td>
+			if !dev.IsApproved {
+				<span class="badge badge-warning">Pending</span>
+			} else if !dev.IsActive {
+				<span class="badge badge-error">Disabled</span>
+			} else {
+				<span class="badge badge-success">Active</span>
+			}
+		</td>
+		<td class="table-actions">
+			if !dev.IsApproved {
+				<button class="btn btn-sm btn-primary"
+					hx-post={ "/devices/" + dev.ID + "/approve" }
+					hx-target={ "#dev-" + dev.ID } hx-swap="outerHTML">Approve</button>
+				<button class="btn btn-sm btn-ghost"
+					hx-post={ "/devices/" + dev.ID + "/reject" }
+					hx-target={ "#dev-" + dev.ID } hx-swap="delete"
+					hx-confirm={ "Reject \"" + dev.Name + "\"?" }>Reject</button>
+			} else if dev.IsActive {
+				<button class="btn btn-sm btn-ghost"
+					hx-post={ "/devices/" + dev.ID + "/disable" }
+					hx-target={ "#dev-" + dev.ID } hx-swap="outerHTML"
+					hx-confirm={ "Disable \"" + dev.Name + "\"?" }>Disable</button>
+			} else {
+				<button class="btn btn-sm btn-outline"
+					hx-post={ "/devices/" + dev.ID + "/enable" }
+					hx-target={ "#dev-" + dev.ID } hx-swap="outerHTML">Enable</button>
+			}
+			<button class="btn btn-sm btn-ghost" style="color:var(--error)"
+				hx-delete={ "/devices/" + dev.ID }
+				hx-target={ "#dev-" + dev.ID } hx-swap="delete"
+				hx-confirm={ "Permanently delete \"" + dev.Name + "\"?" }>Delete</button>
+		</td>
+	</tr>
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Sessions page
 // ─────────────────────────────────────────────────────────────────────────────
@@ -373,47 +434,52 @@ templ AdminUsersPage(data AdminUsersData) {
 				</thead>
 				<tbody>
 					for _, u := range data.Users {
-						<tr id={ "user-" + u.ID }>
-							<td class="font-medium">{ u.Email }</td>
-							<td class="text-muted">{ u.DisplayName }</td>
-							<td>
-								if u.IsAdmin {
-									<span class="badge badge-success">Admin</span>
-								} else {
-									<span class="badge badge-muted">User</span>
-								}
-							</td>
-							<td>
-								if u.IsActive {
-									<span class="badge badge-success">Active</span>
-								} else {
-									<span class="badge badge-error">Inactive</span>
-								}
-							</td>
-							<td class="text-muted">
-								if u.LastLoginAt.Valid {
-									{ u.LastLoginAt.Time.Format("02 Jan 15:04") }
-								} else {
-									Never
-								}
-							</td>
-							<td class="table-actions">
-								if !u.IsAdmin {
-									<button class="btn btn-sm btn-outline"
-										hx-post={ "/users/" + u.ID + "/toggle-admin" }
-										hx-target={ "#user-" + u.ID } hx-swap="outerHTML">Make Admin</button>
-								} else {
-									<button class="btn btn-sm btn-ghost"
-										hx-post={ "/users/" + u.ID + "/toggle-admin" }
-										hx-target={ "#user-" + u.ID } hx-swap="outerHTML">Remove Admin</button>
-								}
-							</td>
-						</tr>
+						@UserRow(u)
 					}
 				</tbody>
 			</table>
 		</div>
 	}
+}
+
+// UserRow renders a single user table row for HTMX outerHTML swaps.
+templ UserRow(u *db.User) {
+	<tr id={ "user-" + u.ID }>
+		<td class="font-medium">{ u.Email }</td>
+		<td class="text-muted">{ u.DisplayName }</td>
+		<td>
+			if u.IsAdmin {
+				<span class="badge badge-success">Admin</span>
+			} else {
+				<span class="badge badge-muted">User</span>
+			}
+		</td>
+		<td>
+			if u.IsActive {
+				<span class="badge badge-success">Active</span>
+			} else {
+				<span class="badge badge-error">Inactive</span>
+			}
+		</td>
+		<td class="text-muted">
+			if u.LastLoginAt.Valid {
+				{ u.LastLoginAt.Time.Format("02 Jan 15:04") }
+			} else {
+				Never
+			}
+		</td>
+		<td class="table-actions">
+			if !u.IsAdmin {
+				<button class="btn btn-sm btn-outline"
+					hx-post={ "/users/" + u.ID + "/toggle-admin" }
+					hx-target={ "#user-" + u.ID } hx-swap="outerHTML">Make Admin</button>
+			} else {
+				<button class="btn btn-sm btn-ghost"
+					hx-post={ "/users/" + u.ID + "/toggle-admin" }
+					hx-target={ "#user-" + u.ID } hx-swap="outerHTML">Remove Admin</button>
+			}
+		</td>
+	</tr>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -424,62 +490,7 @@ templ AdminGroupsPage(data AdminGroupsData) {
 	@AdminLayout("Groups", data.Session, "groups") {
 		<div class="two-col">
 			<div style="display:flex;flex-direction:column;gap:16px" id="groups-list">
-				for _, g := range data.Groups {
-					<div class="card" id={ "group-" + g.ID } style="padding:20px 24px">
-						<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-							<div>
-								<div style="font-weight:600;font-size:15px">{ g.Name }</div>
-								<div style="font-size:12px;color:var(--text-2);margin-top:2px">
-									{ g.SessionDuration.String() } sessions ·
-									if g.IsPublic {
-										<span class="badge badge-success" style="font-size:11px">Public</span>
-									} else {
-										<span class="badge badge-muted" style="font-size:11px">Restricted</span>
-									}
-								</div>
-							</div>
-							<button class="btn btn-sm btn-ghost" style="color:var(--error)"
-								hx-delete={ "/groups/" + g.ID }
-								hx-target={ "#group-" + g.ID } hx-swap="delete"
-								hx-confirm={ "Delete group \"" + g.Name + "\"? It must have no devices assigned." }>
-								Delete
-							</button>
-						</div>
-						<div>
-							<div style="font-size:12px;font-weight:500;color:var(--text-2);margin-bottom:8px">SUBNETS</div>
-							<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">
-								for _, s := range data.Subnets {
-									if groupHasSubnet(g.ID, s.ID, data.GroupSubnets) {
-										<span class="badge badge-success" style="gap:8px">
-											{ s.Name } ({ s.CIDR })
-											<button
-												style="background:none;border:none;cursor:pointer;color:inherit;padding:0;font-size:14px;line-height:1"
-												hx-delete={ "/groups/" + g.ID + "/subnets/" + s.ID }
-												hx-target={ "#group-" + g.ID } hx-swap="outerHTML"
-												title="Remove subnet">×</button>
-										</span>
-									}
-								}
-							</div>
-							<select
-								class="input"
-								style="font-size:12px;padding:5px 10px;max-width:280px"
-								hx-post={ "/groups/" + g.ID + "/subnets" }
-								hx-target={ "#group-" + g.ID } hx-swap="outerHTML"
-								hx-include="this"
-								name="subnet_id"
-								hx-trigger="change"
-							>
-								<option value="">Add subnet…</option>
-								for _, s := range data.Subnets {
-									if !groupHasSubnet(g.ID, s.ID, data.GroupSubnets) {
-										<option value={ s.ID }>{ s.Name } ({ s.CIDR })</option>
-									}
-								}
-							</select>
-						</div>
-					</div>
-				}
+				@GroupsList(data)
 			</div>
 			<div class="card form-panel">
 				<h3>Create Group</h3>
@@ -504,9 +515,68 @@ templ AdminGroupsPage(data AdminGroupsData) {
 						</label>
 					</div>
 					<button type="submit" class="btn btn-primary">Create Group</button>
-				</form>
+
+// GroupCard renders a single group card for HTMX outerHTML swaps.
+templ GroupCard(g *db.Group, subnets []*db.Subnet, groupSubnets map[string][]string) {
+	<div class="card" id={ "group-" + g.ID } style="padding:20px 24px">
+		<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+			<div>
+				<div style="font-weight:600;font-size:15px">{ g.Name }</div>
+				<div style="font-size:12px;color:var(--text-2);margin-top:2px">
+					{ g.SessionDuration.String() } sessions ·
+					if g.IsPublic {
+						<span class="badge badge-success" style="font-size:11px">Public</span>
+					} else {
+						<span class="badge badge-muted" style="font-size:11px">Restricted</span>
+					}
+				</div>
 			</div>
+			<button class="btn btn-sm btn-ghost" style="color:var(--error)"
+				hx-delete={ "/groups/" + g.ID }
+				hx-target={ "#group-" + g.ID } hx-swap="delete"
+				hx-confirm={ "Delete group \"" + g.Name + "\"? It must have no devices assigned." }>
+				Delete
+			</button>
 		</div>
+		<div>
+			<div style="font-size:12px;font-weight:500;color:var(--text-2);margin-bottom:8px">SUBNETS</div>
+			<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">
+				for _, s := range subnets {
+					if groupHasSubnet(g.ID, s.ID, groupSubnets) {
+						<span class="badge badge-success" style="gap:8px">
+							{ s.Name } ({ s.CIDR })
+							<button
+								style="background:none;border:none;cursor:pointer;color:inherit;padding:0;font-size:14px;line-height:1"
+								hx-delete={ "/groups/" + g.ID + "/subnets/" + s.ID }
+								hx-target={ "#group-" + g.ID } hx-swap="outerHTML"
+								title="Remove subnet">×</button>
+						</span>
+					}
+				}
+			</div>
+			<select
+				class="input"
+				style="font-size:12px;padding:5px 10px;max-width:280px"
+				hx-post={ "/groups/" + g.ID + "/subnets" }
+				hx-target={ "#group-" + g.ID } hx-swap="outerHTML"
+				hx-include="this"
+				name="subnet_id"
+				hx-trigger="change">
+				<option value="">Add subnet…</option>
+				for _, s := range subnets {
+					if !groupHasSubnet(g.ID, s.ID, groupSubnets) {
+						<option value={ s.ID }>{ s.Name } ({ s.CIDR })</option>
+					}
+				}
+			</select>
+		</div>
+	</div>
+}
+
+// GroupsList renders just the groups list for HTMX innerHTML swaps.
+templ GroupsList(data AdminGroupsData) {
+	for _, g := range data.Groups {
+		@GroupCard(g, data.Subnets, data.GroupSubnets)
 	}
 }
 

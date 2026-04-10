@@ -33,11 +33,30 @@ func renderAdminUsers(w http.ResponseWriter, r *http.Request, data AdminUsersDat
 
 func renderAdminGroups(w http.ResponseWriter, r *http.Request, data AdminGroupsData) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// For HTMX requests targeting the groups list, return only the fragment
+	if r.Header.Get("HX-Request") == "true" {
+		GroupsList(data).Render(r.Context(), w) //nolint:errcheck
+		return
+	}
 	AdminGroupsPage(data).Render(r.Context(), w) //nolint:errcheck
+}
+
+func renderGroupCard(w http.ResponseWriter, r *http.Request, data AdminGroupsData, groupID string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	for _, g := range data.Groups {
+		if g.ID == groupID {
+			GroupCard(g, data.Subnets, data.GroupSubnets).Render(r.Context(), w) //nolint:errcheck
+			return
+		}
+	}
 }
 
 func renderAdminSubnets(w http.ResponseWriter, r *http.Request, data AdminSubnetsData) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if r.Header.Get("HX-Request") == "true" {
+		SubnetRows(data).Render(r.Context(), w) //nolint:errcheck
+		return
+	}
 	AdminSubnetsPage(data).Render(r.Context(), w) //nolint:errcheck
 }
 

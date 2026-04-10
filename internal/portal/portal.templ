@@ -18,10 +18,9 @@ templ Layout(title string, session *SessionData) {
 		<link rel="preconnect" href="https://fonts.googleapis.com"/>
 		<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"/>
 		<script src="https://unpkg.com/htmx.org@2.0.0/dist/htmx.min.js" defer></script>
-		<script src="https://unpkg.com/htmx-ext-ws@2.0.0/ws.js" defer></script>
 		<link rel="stylesheet" href="/static/css/portal.css"/>
 	</head>
-	<body hx-ext="ws" ws-connect="/ws">
+	<body>
 
 	<nav class="nav">
 		<div class="nav-brand">

@@ -52,36 +52,51 @@ function updateCountdown(el, expiresAt) {
 }
 
 // ── WebSocket live updates ────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  startCountdowns();
-  document.body.addEventListener('htmx:afterSwap', startCountdowns);
-});
+let ws = null;
+let wsReconnectTimer = null;
 
-document.body.addEventListener('htmx:wsMessage', (evt) => {
-  try {
-    const event = JSON.parse(evt.detail.message);
-    handleServerEvent(event);
-  } catch (e) { /* not JSON */ }
-});
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}/ws`);
+
+  ws.onopen = () => {
+    console.log('[wicket] WS connected');
+  };
+
+  ws.onmessage = (evt) => {
+    try {
+      const event = JSON.parse(evt.data);
+      handleServerEvent(event);
+    } catch (e) { /* not JSON */ }
+  };
+
+  ws.onclose = () => {
+    console.log('[wicket] WS disconnected, reconnecting in 5s...');
+    wsReconnectTimer = setTimeout(connectWS, 5000);
+  };
+
+  ws.onerror = () => {
+    ws.close();
+  };
+}
 
 function handleServerEvent(event) {
+  console.log('[wicket] event:', event.type, event);
   switch (event.type) {
     case 'device.approved':
-    case 'device.rejected':
-      // Refresh the entire device list
-      htmx.ajax('GET', '/', { target: '#device-list', swap: 'innerHTML', select: '#device-list > *' });
-      showToast(event.type === 'device.approved' ? 'Your device has been approved!' : 'A device request was rejected.', 
-                event.type === 'device.approved' ? 'success' : 'warning');
+      htmx.ajax('GET', '/', { target: '#device-list', swap: 'innerHTML', select: '#device-list' });
+      showToast('Your device has been approved!', 'success');
       break;
-
+    case 'device.rejected':
+      htmx.ajax('GET', '/', { target: '#device-list', swap: 'innerHTML', select: '#device-list' });
+      showToast('A device request was rejected.', 'warning');
+      break;
     case 'session.expired':
     case 'session.revoked':
-      // Refresh device list so session status updates
-      htmx.ajax('GET', '/', { target: '#device-list', swap: 'innerHTML', select: '#device-list > *' });
+      htmx.ajax('GET', '/', { target: '#device-list', swap: 'innerHTML', select: '#device-list' });
       break;
-
     case 'peer.added':
-      showToast('VPN session is active', 'success');
+      showToast('VPN session is now active', 'success');
       break;
   }
 }
@@ -103,7 +118,8 @@ function showToast(message, type = 'info') {
     fontSize: '14px', fontWeight: '500',
     background: c.bg, color: c.color,
     boxShadow: '0 8px 24px rgba(0,0,0,.15)',
-    animation: 'slideUp 0.25s ease', zIndex: '1000', maxWidth: '360px',
+    zIndex: '1000', maxWidth: '360px',
+    animation: 'slideUp 0.25s ease',
   });
   document.body.appendChild(toast);
   setTimeout(() => {
@@ -112,3 +128,10 @@ function showToast(message, type = 'info') {
     setTimeout(() => toast.remove(), 300);
   }, 4000);
 }
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  startCountdowns();
+  document.body.addEventListener('htmx:afterSwap', startCountdowns);
+  connectWS();
+});
