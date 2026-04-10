@@ -515,6 +515,11 @@ templ AdminGroupsPage(data AdminGroupsData) {
 						</label>
 					</div>
 					<button type="submit" class="btn btn-primary">Create Group</button>
+				</form>
+			</div>
+		</div>
+	}
+}
 
 // GroupCard renders a single group card for HTMX outerHTML swaps.
 templ GroupCard(g *db.Group, subnets []*db.Subnet, groupSubnets map[string][]string) {
