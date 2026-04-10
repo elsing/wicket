@@ -203,7 +203,7 @@ func (s *Service) CreateDevice(ctx context.Context, userID, groupID, name, ipAdd
 		s.log.Warn("writing device created audit log", zap.Error(err))
 	}
 
-	s.emit(Event{Type: EventDeviceCreated, UserID: userID, DeviceID: dev.ID})
+	s.emit(Event{Type: EventDeviceCreated, UserID: userID, OwnerID: userID, DeviceID: dev.ID})
 
 	// Build the one-time config file.
 	conf, err := s.buildClientConfig(ctx, dev, privateKey)

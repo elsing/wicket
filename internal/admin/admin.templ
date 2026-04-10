@@ -106,14 +106,21 @@ templ AdminDashboardPage(data AdminDashboardData) {
 			</a>
 		</div>
 
-		if len(data.PendingDevices) > 0 {
-			<section class="dashboard-section">
-				<h2>Pending Approvals <span class="badge badge-warning">{ itoa(len(data.PendingDevices)) }</span></h2>
-				<div id="pending-devices">
+		<section class="dashboard-section">
+			<h2>
+				Pending Approvals
+				if len(data.PendingDevices) > 0 {
+					<span class="badge badge-warning">{ itoa(len(data.PendingDevices)) }</span>
+				}
+			</h2>
+			<div id="pending-devices">
+				if len(data.PendingDevices) > 0 {
 					@PendingDevicesTable(data.PendingDevices)
-				</div>
-			</section>
-		}
+				} else {
+					<p class="text-muted" style="padding:16px;font-size:14px">No pending approvals</p>
+				}
+			</div>
+		</section>
 
 		<section class="dashboard-section">
 			<h2>Active Sessions</h2>

@@ -120,6 +120,10 @@ function connectWS() {
 function handleEvent(event) {
   console.log('[wicket]', event.type, event);
   switch (event.type) {
+    case 'device.created':
+      // New device was just added — refresh so it appears in the list
+      refreshDeviceList();
+      break;
     case 'device.approved':
       refreshDeviceList();
       showToast('Your device has been approved!', 'success');

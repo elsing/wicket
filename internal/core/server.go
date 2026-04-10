@@ -82,19 +82,24 @@ func New(cfg *config.Config, log *zap.Logger) (*Server, error) {
 	// HTTP servers are built with placeholder handlers; the serve command
 	// injects real handlers via SetPublicHandler / SetAdminHandler before
 	// calling Start().
+	// ReadHeaderTimeout protects against Slowloris attacks (slow header delivery)
+	// without affecting WebSocket connections — the header phase completes before
+	// the WS upgrade, so the timeout never fires on live connections.
+	// ReadTimeout and WriteTimeout are intentionally omitted: they apply to the
+	// underlying TCP connection and kill WebSocket connections after the timeout
+	// even when the connection is healthy. The reverse proxy handles overall
+	// connection timeouts for HTTP requests.
 	srv.publicHTTP = &http.Server{
-		Addr:         cfg.Public.BindAddr,
-		Handler:      http.NotFoundHandler(),
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  120 * time.Second,
+		Addr:              cfg.Public.BindAddr,
+		Handler:           http.NotFoundHandler(),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 	srv.adminHTTP = &http.Server{
-		Addr:         cfg.Admin.BindAddr,
-		Handler:      http.NotFoundHandler(),
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  120 * time.Second,
+		Addr:              cfg.Admin.BindAddr,
+		Handler:           http.NotFoundHandler(),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	return srv, nil
