@@ -46,5 +46,6 @@ EXPOSE 51820/udp
 
 VOLUME ["/data"]
 
-ENTRYPOINT ["/usr/local/bin/wicket"]
+COPY entrypoint.sh /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["serve", "--config", "/etc/wicket/config.yaml"]
