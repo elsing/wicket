@@ -311,11 +311,10 @@ func (h *Handler) handleRejectDevice(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleDisableDevice(w http.ResponseWriter, r *http.Request) {
 	sess := portal.SessionFromContext(r.Context())
 	deviceID := chi.URLParam(r, "deviceID")
-	if err := h.svc.DB().SetDeviceActive(r.Context(), deviceID, false); err != nil {
+	if err := h.svc.DisableDevice(r.Context(), deviceID, sess.UserID); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	h.svc.WriteAuditLog(r.Context(), deviceID, sess.UserID, "device.disabled", clientIP(r))
 	h.renderDeviceRow(w, r, deviceID)
 }
 

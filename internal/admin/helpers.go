@@ -80,12 +80,10 @@ func humanEvent(event string) string {
 	return event
 }
 
-// expiryIsUrgent returns true when a session expires in < 30 minutes.
-func expiryIsUrgent(t time.Time) bool {
-	return time.Until(t) < 30*time.Minute
-}
 
-// expiryIsWarning returns true when a session expires in < 2 hours.
-func expiryIsWarning(t time.Time) bool {
-	return time.Until(t) < 2*time.Hour
-}
+
+// expiryUrgent returns true when a session expires in < 30 minutes.
+func expiryUrgent(t time.Time) bool { return time.Until(t) < 30*time.Minute }
+
+// expiryWarning returns true when a session expires in < 2 hours.
+func expiryWarning(t time.Time) bool { return time.Until(t) < 2*time.Hour }

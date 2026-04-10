@@ -18,11 +18,20 @@ func renderPendingDevices(w http.ResponseWriter, r *http.Request, devices []*db.
 
 func renderAdminDevices(w http.ResponseWriter, r *http.Request, data AdminDevicesData) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if r.Header.Get("HX-Request") == "true" {
+		// Return only the tbody rows for live refresh
+		DeviceTableBody(data.Devices).Render(r.Context(), w) //nolint:errcheck
+		return
+	}
 	AdminDevicesPage(data).Render(r.Context(), w) //nolint:errcheck
 }
 
 func renderAdminSessions(w http.ResponseWriter, r *http.Request, data AdminSessionsData) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if r.Header.Get("HX-Request") == "true" {
+		SessionTableBody(data.Sessions).Render(r.Context(), w) //nolint:errcheck
+		return
+	}
 	AdminSessionsPage(data).Render(r.Context(), w) //nolint:errcheck
 }
 

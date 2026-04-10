@@ -48,13 +48,22 @@ function handleAdminEvent(event) {
   switch (event.type) {
     case 'device.created':
       refreshPending();
+      refreshDevicesTable();
       showToast('New device pending approval', 'warning');
       break;
     case 'device.approved':
+      refreshPending();
+      refreshDevicesTable();
+      showToast('Device approved', 'success');
+      break;
     case 'device.rejected':
       refreshPending();
+      refreshDevicesTable();
       break;
     case 'session.created':
+      refreshSessions();
+      showToast('Session activated', 'success');
+      break;
     case 'session.revoked':
     case 'session.expired':
       refreshSessions();
@@ -73,9 +82,14 @@ function refreshPending() {
   if (el) htmx.ajax('GET', '/devices/pending', { target: '#pending-devices', swap: 'innerHTML' });
 }
 
+function refreshDevicesTable() {
+  const el = document.getElementById('devices-tbody');
+  if (el) htmx.ajax('GET', '/devices', { target: '#devices-tbody', swap: 'innerHTML' });
+}
+
 function refreshSessions() {
   const el = document.getElementById('sessions-table');
-  if (el) htmx.ajax('GET', '/sessions', { target: '#sessions-table', swap: 'innerHTML', select: 'tbody' });
+  if (el) htmx.ajax('GET', '/sessions', { target: '#sessions-table', swap: 'innerHTML' });
 }
 
 // ── Metrics charts ────────────────────────────────────────────────────────────

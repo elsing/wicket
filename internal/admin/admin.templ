@@ -136,7 +136,15 @@ templ AdminDashboardPage(data AdminDashboardData) {
 									}
 								</td>
 								<td class="text-muted">{ s.IPAddress }</td>
-								<td>{ s.ExpiresAt.Format("02 Jan 15:04") }</td>
+								<td>
+								if expiryUrgent(s.ExpiresAt) {
+									<span style="color:var(--error-text);font-weight:500">{ s.ExpiresAt.Format("02 Jan 15:04") }</span>
+								} else if expiryWarning(s.ExpiresAt) {
+									<span style="color:var(--warning-text)">{ s.ExpiresAt.Format("02 Jan 15:04") }</span>
+								} else {
+									{ s.ExpiresAt.Format("02 Jan 15:04") }
+								}
+							</td>
 								<td>
 									<button
 										class="btn btn-sm btn-ghost"
@@ -383,6 +391,13 @@ templ AdminDevicesPage(data AdminDevicesData) {
 	}
 }
 
+// DeviceTableBody renders just the tbody rows for live refresh.
+templ DeviceTableBody(devices []*db.Device) {
+	for _, dev := range devices {
+		@DeviceRow(dev)
+	}
+}
+
 // DeviceRow renders a single device table row for HTMX outerHTML swaps.
 templ DeviceRow(dev *db.Device) {
 	<tr id={ "dev-" + dev.ID }>
@@ -430,7 +445,7 @@ templ DeviceRow(dev *db.Device) {
 					hx-post={ "/devices/" + dev.ID + "/enable" }
 					hx-target={ "#dev-" + dev.ID } hx-swap="outerHTML">Enable</button>
 			}
-			<button class="btn btn-sm btn-ghost" style="color:var(--error)"
+			<button class="btn btn-sm btn-ghost" style="color:var(--error-text)"
 				hx-delete={ "/devices/" + dev.ID }
 				hx-target={ "#dev-" + dev.ID } hx-swap="delete"
 				hx-confirm={ "Permanently delete \"" + dev.Name + "\"?" }>Delete</button>
@@ -486,6 +501,47 @@ templ AdminSessionsPage(data AdminSessionsData) {
 				</tbody>
 			</table>
 		</div>
+	}
+}
+
+// SessionTableBody renders just the session tbody rows for live refresh.
+templ SessionTableBody(sessions []*db.Session) {
+	for _, s := range sessions {
+		<tr id={ "session-row-" + s.ID }>
+			<td class="font-medium">
+				if s.DeviceName != "" {
+					{ s.DeviceName }
+				} else {
+					{ s.DeviceID[:8] }…
+				}
+			</td>
+			<td class="text-muted">
+				if s.UserEmail != "" {
+					{ s.UserEmail }
+				}
+			</td>
+			<td class="text-muted">{ s.IPAddress }</td>
+			<td>
+				if expiryUrgent(s.ExpiresAt) {
+					<span style="color:var(--error-text);font-weight:500">{ s.ExpiresAt.Format("02 Jan 15:04") }</span>
+				} else if expiryWarning(s.ExpiresAt) {
+					<span style="color:var(--warning-text)">{ s.ExpiresAt.Format("02 Jan 15:04") }</span>
+				} else {
+					{ s.ExpiresAt.Format("02 Jan 15:04") }
+				}
+			</td>
+			<td class="text-muted">{ itoa(s.ExtensionCount) }</td>
+			<td class="table-actions">
+				<button class="btn btn-sm btn-outline"
+					hx-post={ "/sessions/" + s.ID + "/extend" }
+					hx-vals='{"duration":"24h"}'
+					hx-target={ "#session-row-" + s.ID } hx-swap="outerHTML">+24h</button>
+				<button class="btn btn-sm btn-ghost"
+					hx-post={ "/sessions/" + s.ID + "/revoke" }
+					hx-target={ "#session-row-" + s.ID } hx-swap="delete"
+					hx-confirm="Revoke this session?">Revoke</button>
+			</td>
+		</tr>
 	}
 }
 

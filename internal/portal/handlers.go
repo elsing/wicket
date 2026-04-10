@@ -418,15 +418,34 @@ func (h *Handler) handleExtendSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
-	session := SessionFromContext(r.Context())
+	userSession := SessionFromContext(r.Context())
 	sessionID := chi.URLParam(r, "sessionID")
 
-	if err := h.svc.RevokeSession(r.Context(), sessionID, session.UserID, clientIP(r), false); err != nil {
+	// Look up the device before revoking so we can return the updated card
+	dbSession, err := h.svc.DB().GetSessionByID(r.Context(), sessionID)
+	if err != nil {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+
+	if err := h.svc.RevokeSession(r.Context(), sessionID, userSession.UserID, clientIP(r), false); err != nil {
 		h.log.Warn("revoking session", zap.Error(err))
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
+	// Return the updated device card so the UI reflects the change immediately
+	devices, err := h.svc.GetDevicesForUser(r.Context(), userSession.UserID)
+	if err != nil {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	for _, d := range devices {
+		if d.ID == dbSession.DeviceID {
+			renderDeviceCard(w, r, d)
+			return
+		}
+	}
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -452,3 +471,5 @@ func clientIP(r *http.Request) string {
 	}
 	return r.RemoteAddr
 }
+
+

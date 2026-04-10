@@ -227,11 +227,10 @@ templ DeviceActions(dev *db.Device) {
 	<div class="device-actions">
 		if dev.IsApproved && dev.IsActive {
 			if dev.ActiveSession != nil && dev.ActiveSession.IsActive() {
-				// Active: show extend and deactivate
 				<button
 					class="btn btn-sm btn-outline"
 					hx-post={ "/sessions/" + dev.ActiveSession.ID + "/extend" }
-					hx-target={ "#device-" + dev.ID + " .badge-success" }
+					hx-target={ "#device-" + dev.ID }
 					hx-swap="outerHTML"
 				>
 					Extend
@@ -241,12 +240,10 @@ templ DeviceActions(dev *db.Device) {
 					hx-delete={ "/sessions/" + dev.ActiveSession.ID }
 					hx-target={ "#device-" + dev.ID }
 					hx-swap="outerHTML"
-					hx-confirm="Deactivate this device?"
 				>
 					Deactivate
 				</button>
 			} else {
-				// Inactive: show activate button
 				<button
 					class="btn btn-sm btn-primary"
 					hx-post="/sessions"
@@ -258,6 +255,16 @@ templ DeviceActions(dev *db.Device) {
 				</button>
 			}
 		}
+		<button
+			class="btn btn-sm btn-ghost"
+			style="color:var(--error-text)"
+			hx-delete={ "/devices/" + dev.ID }
+			hx-target={ "#device-" + dev.ID }
+			hx-swap="delete"
+			hx-confirm={ "Delete " + dev.Name + "? This cannot be undone." }
+		>
+			Delete
+		</button>
 	</div>
 }
 
@@ -392,12 +399,11 @@ templ ConfigDownloadPage(data ConfigDownloadData) {
 					<canvas id="qr-canvas" style="border-radius:8px"></canvas>
 				</div>
 
-				<div class="config-done" style="display:none">
-					<div class="alert alert-success">
-						Config saved. Your device is pending admin approval — you'll be notified when it's approved.
-					</div>
-					<a href="/" class="btn btn-ghost">Back to dashboard</a>
+				<div class="alert alert-success" style="margin-top:16px">
+					Config generated — save it now. The private key is shown once and not stored.
+					Your device will be pending approval until an admin approves it.
 				</div>
+				<a href="/" class="btn btn-primary" style="margin-top:12px">← Back to dashboard</a>
 			</div>
 		</div>
 	}

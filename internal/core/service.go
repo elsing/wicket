@@ -367,6 +367,36 @@ func (s *Service) RejectDevice(ctx context.Context, deviceID, adminUserID, ipAdd
 	return nil
 }
 
+// DisableDevice marks a device inactive, revokes all active sessions, and removes the WireGuard peer.
+func (s *Service) DisableDevice(ctx context.Context, deviceID, actorUserID string) error {
+	dev, err := s.db.GetDeviceByID(ctx, deviceID)
+	if err != nil {
+		return fmt.Errorf("getting device: %w", err)
+	}
+
+	// Revoke any active sessions
+	sess, err := s.db.GetActiveSessionForDevice(ctx, deviceID)
+	if err == nil && sess != nil {
+		if err := s.db.RevokeSession(ctx, sess.ID, actorUserID); err != nil {
+			s.log.Warn("revoking session on disable", zap.Error(err))
+		}
+	}
+
+	// Remove from WireGuard immediately
+	if err := s.peers.RemovePeer(dev.PublicKey); err != nil {
+		s.log.Warn("removing peer on disable", zap.String("device", dev.Name), zap.Error(err))
+	}
+
+	// Mark disabled in DB
+	if err := s.db.SetDeviceActive(ctx, deviceID, false); err != nil {
+		return fmt.Errorf("disabling device: %w", err)
+	}
+
+	s.log.Info("device disabled", zap.String("device", dev.Name), zap.String("actor", actorUserID))
+	s.emit(Event{Type: EventPeerRemoved, DeviceID: deviceID, UserID: dev.UserID})
+	return nil
+}
+
 // DeleteDevice removes a device, revokes any active sessions, and removes the WireGuard peer.
 func (s *Service) DeleteDevice(ctx context.Context, deviceID, actorUserID string, isAdmin bool) error {
 	dev, err := s.db.GetDeviceByID(ctx, deviceID)
@@ -756,20 +786,24 @@ func (s *Service) allocateIP(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("listing devices for IP allocation: %w", err)
 	}
 
-	used := make(map[string]bool, len(allDevices)+1)
+	used := make(map[string]bool, len(allDevices)+2)
 
-	// Reserve the server's own IP.
-	serverIP, _, _ := net.ParseCIDR(s.cfg.WireGuard.Address)
-	used[serverIP.String()] = true
-
-	// Reserve the network address itself.
+	// Reserve the network address (.0) and broadcast address.
 	used[network.IP.String()] = true
+
+	// Reserve the server's own IP — normalise to 4-byte to match iterator.
+	serverIP, _, _ := net.ParseCIDR(s.cfg.WireGuard.Address)
+	if ip4 := serverIP.To4(); ip4 != nil {
+		serverIP = ip4
+	}
+	used[serverIP.String()] = true
 
 	for _, dev := range allDevices {
 		used[dev.AssignedIP] = true
 	}
 
 	// Walk the subnet sequentially for the next free address.
+	// cloneIP starts at network+1; server IP is in used so will be skipped.
 	for ip := cloneIP(network.IP); network.Contains(ip); incrementIP(ip) {
 		candidate := ip.String()
 		if !used[candidate] {
