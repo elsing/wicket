@@ -24,9 +24,9 @@ const (
 // The WebSocket hub broadcasts relevant events to connected portal clients.
 type Event struct {
 	Type     EventType `json:"type"`
-	UserID   string    `json:"user_id,omitempty"`
+	UserID   string    `json:"user_id,omitempty"`  // actor who caused the event
+	OwnerID  string    `json:"owner_id,omitempty"` // device/session owner — used to route to public client
 	DeviceID string    `json:"device_id,omitempty"`
 	AgentID  string    `json:"agent_id,omitempty"`
-	// Payload carries additional context (e.g. expires_at for session events).
-	Payload any `json:"payload,omitempty"`
+	Payload  any       `json:"payload,omitempty"`
 }

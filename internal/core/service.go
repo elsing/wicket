@@ -345,7 +345,7 @@ func (s *Service) ApproveDevice(ctx context.Context, deviceID, adminUserID, ipAd
 		s.log.Warn("writing device approved audit log", zap.Error(err))
 	}
 
-	s.emit(Event{Type: EventDeviceApproved, DeviceID: deviceID, UserID: dev.UserID, Payload: map[string]any{"device_name": dev.Name}})
+	s.emit(Event{Type: EventDeviceApproved, DeviceID: deviceID, UserID: adminUserID, OwnerID: dev.UserID, Payload: map[string]any{"device_name": dev.Name}})
 	return nil
 }
 
@@ -370,7 +370,7 @@ func (s *Service) RejectDevice(ctx context.Context, deviceID, adminUserID, ipAdd
 		s.log.Warn("writing device rejected audit log", zap.Error(err))
 	}
 
-	s.emit(Event{Type: EventDeviceRejected, DeviceID: deviceID, UserID: dev.UserID, Payload: map[string]any{"device_name": dev.Name}})
+	s.emit(Event{Type: EventDeviceRejected, DeviceID: deviceID, UserID: adminUserID, OwnerID: dev.UserID, Payload: map[string]any{"device_name": dev.Name}})
 	return nil
 }
 
@@ -400,7 +400,7 @@ func (s *Service) DisableDevice(ctx context.Context, deviceID, actorUserID strin
 	}
 
 	s.log.Info("device disabled", zap.String("device", dev.Name), zap.String("actor", actorUserID))
-	s.emit(Event{Type: EventPeerRemoved, DeviceID: deviceID, UserID: dev.UserID})
+	s.emit(Event{Type: EventPeerRemoved, DeviceID: deviceID, UserID: actorUserID, OwnerID: dev.UserID})
 	return nil
 }
 
@@ -424,7 +424,7 @@ func (s *Service) DeleteDevice(ctx context.Context, deviceID, actorUserID string
 	}
 
 	s.log.Info("device deleted", zap.String("device", dev.Name), zap.String("actor", actorUserID))
-	s.emit(Event{Type: EventDeviceRejected, DeviceID: deviceID, UserID: dev.UserID})
+	s.emit(Event{Type: EventDeviceRejected, DeviceID: deviceID, UserID: actorUserID, OwnerID: dev.UserID})
 	return nil
 }
 
@@ -520,7 +520,7 @@ func (s *Service) ActivateSession(ctx context.Context, deviceID, userID, ipAddre
 		s.log.Warn("writing session created audit log", zap.Error(err))
 	}
 
-	s.emit(Event{Type: EventSessionCreated, DeviceID: deviceID, UserID: userID,
+	s.emit(Event{Type: EventSessionCreated, DeviceID: deviceID, UserID: userID, OwnerID: userID,
 		Payload: map[string]any{"expires_at": expiresAt}})
 
 	// Add the peer to WireGuard immediately rather than waiting for the reconciler.
@@ -561,6 +561,7 @@ func (s *Service) ActivateSession(ctx context.Context, deviceID, userID, ipAddre
 			zap.String("device", dev.Name),
 			zap.String("ip", dev.AssignedIP),
 		)
+		s.emit(Event{Type: EventPeerAdded, DeviceID: dev.ID, OwnerID: dev.UserID})
 	}()
 
 	return session, nil
@@ -682,7 +683,11 @@ func (s *Service) RevokeSession(ctx context.Context, sessionID, actorUserID, ipA
 		s.log.Warn("writing session revoked audit log", zap.Error(err))
 	}
 
-	s.emit(Event{Type: EventSessionRevoked, DeviceID: session.DeviceID})
+	ownerID := ""
+	if dev != nil {
+		ownerID = dev.UserID
+	}
+	s.emit(Event{Type: EventSessionRevoked, DeviceID: session.DeviceID, UserID: actorUserID, OwnerID: ownerID})
 	return nil
 }
 
