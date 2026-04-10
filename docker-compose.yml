@@ -12,9 +12,10 @@ services:
       - net.ipv4.ip_forward=1
       - net.ipv4.conf.all.src_valid_mark=1
 
-    ports:
-      - "8080:8080/tcp"     # public portal — expose via reverse proxy
-      - "51820:51820/udp"   # WireGuard VPN
+    # If not using host mode:
+    # ports:
+    #   - "8080:8080/tcp"     # public portal — expose via reverse proxy
+    #   - "51820:51820/udp"   # WireGuard VPN
 
     # Admin portal (9090) is intentionally NOT published here.
     # Accessible only from host or over VPN.
@@ -41,4 +42,4 @@ services:
       retries: 3
       start_period: 15s
 
-#    network_mode: host
+   network_mode: host
