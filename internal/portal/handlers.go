@@ -350,7 +350,7 @@ func (h *Handler) handleDeviceQR(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleDeleteDevice(w http.ResponseWriter, r *http.Request) {
 	session := SessionFromContext(r.Context())
 	deviceID := chi.URLParam(r, "deviceID")
-	if err := h.svc.DeleteDevice(r.Context(), deviceID, session.UserID, false); err != nil {
+	if err := h.svc.DeleteDevice(r.Context(), deviceID, session.UserID, clientIP(r), false); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

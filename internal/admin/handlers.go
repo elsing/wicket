@@ -337,7 +337,7 @@ func (h *Handler) handleRejectDevice(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleDisableDevice(w http.ResponseWriter, r *http.Request) {
 	sess := portal.SessionFromContext(r.Context())
 	deviceID := chi.URLParam(r, "deviceID")
-	if err := h.svc.DisableDevice(r.Context(), deviceID, sess.UserID); err != nil {
+	if err := h.svc.DisableDevice(r.Context(), deviceID, sess.UserID, clientIP(r)); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -655,7 +655,7 @@ func (h *Handler) renderGroupCard(w http.ResponseWriter, r *http.Request, groupI
 func (h *Handler) handleDeleteDevice(w http.ResponseWriter, r *http.Request) {
 	sess := portal.SessionFromContext(r.Context())
 	deviceID := chi.URLParam(r, "deviceID")
-	if err := h.svc.DeleteDevice(r.Context(), deviceID, sess.UserID, true); err != nil {
+	if err := h.svc.DeleteDevice(r.Context(), deviceID, sess.UserID, clientIP(r), true); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

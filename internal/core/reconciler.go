@@ -58,8 +58,6 @@ func (r *Reconciler) LastRun() time.Time {
 func (r *Reconciler) Run(ctx context.Context, interval time.Duration) {
 	r.log.Info("reconciler started", zap.Duration("interval", interval))
 
-	// Brief delay before first pass so startup DB writes (migrations, initial
-	// queries) complete before the reconciler begins its own writes.
 	select {
 	case <-ctx.Done():
 		return

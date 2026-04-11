@@ -375,7 +375,7 @@ func (s *Service) RejectDevice(ctx context.Context, deviceID, adminUserID, ipAdd
 }
 
 // DisableDevice marks a device inactive, revokes all active sessions, and removes the WireGuard peer.
-func (s *Service) DisableDevice(ctx context.Context, deviceID, actorUserID string) error {
+func (s *Service) DisableDevice(ctx context.Context, deviceID, actorUserID, ipAddress string) error {
 	dev, err := s.db.GetDeviceByID(ctx, deviceID)
 	if err != nil {
 		return fmt.Errorf("getting device: %w", err)
@@ -400,10 +400,11 @@ func (s *Service) DisableDevice(ctx context.Context, deviceID, actorUserID strin
 	}
 
 	if err := s.db.WriteAuditLog(ctx, &db.AuditLog{
-		UserID:   sql.NullString{String: actorUserID, Valid: actorUserID != ""},
-		DeviceID: sql.NullString{String: deviceID, Valid: true},
-		Event:    "device.disabled",
-		Metadata: db.AuditMeta("device_name", dev.Name),
+		UserID:    sql.NullString{String: actorUserID, Valid: actorUserID != ""},
+		DeviceID:  sql.NullString{String: deviceID, Valid: true},
+		Event:     "device.disabled",
+		IPAddress: ipAddress,
+		Metadata:  db.AuditMeta("device_name", dev.Name),
 	}); err != nil {
 		s.log.Warn("writing device disabled audit log", zap.Error(err))
 	}
@@ -413,7 +414,7 @@ func (s *Service) DisableDevice(ctx context.Context, deviceID, actorUserID strin
 }
 
 // DeleteDevice removes a device, revokes any active sessions, and removes the WireGuard peer.
-func (s *Service) DeleteDevice(ctx context.Context, deviceID, actorUserID string, isAdmin bool) error {
+func (s *Service) DeleteDevice(ctx context.Context, deviceID, actorUserID, ipAddress string, isAdmin bool) error {
 	dev, err := s.db.GetDeviceByID(ctx, deviceID)
 	if err != nil {
 		return fmt.Errorf("getting device: %w", err)
@@ -432,10 +433,11 @@ func (s *Service) DeleteDevice(ctx context.Context, deviceID, actorUserID string
 	}
 
 	if err := s.db.WriteAuditLog(ctx, &db.AuditLog{
-		UserID:   sql.NullString{String: actorUserID, Valid: actorUserID != ""},
-		DeviceID: sql.NullString{String: deviceID, Valid: true},
-		Event:    "device.deleted",
-		Metadata: db.AuditMeta("device_name", dev.Name),
+		UserID:    sql.NullString{String: actorUserID, Valid: actorUserID != ""},
+		DeviceID:  sql.NullString{String: deviceID, Valid: true},
+		Event:     "device.deleted",
+		IPAddress: ipAddress,
+		Metadata:  db.AuditMeta("device_name", dev.Name),
 	}); err != nil {
 		s.log.Warn("writing device deleted audit log", zap.Error(err))
 	}

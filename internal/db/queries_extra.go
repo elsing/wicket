@@ -133,3 +133,40 @@ func (d *DB) GetLocalAdminByID(ctx context.Context, id string) (*LocalAdmin, err
 	}
 	return &a, nil
 }
+
+// RevokeAllSessionsForDevice revokes all active sessions for a device,
+// keeping only the most recent one. Used to clean up duplicate sessions.
+func (d *DB) RevokeAllSessionsForDevice(ctx context.Context, deviceID string) (int64, error) {
+	result, err := d.sql.ExecContext(ctx, `
+		UPDATE sessions SET status = 'revoked', revoked_at = ?, revoked_by = 'system:cleanup'
+		WHERE device_id = ? AND status = 'active'
+		  AND id NOT IN (
+		      SELECT id FROM sessions
+		      WHERE device_id = ? AND status = 'active'
+		      ORDER BY authed_at DESC LIMIT 1
+		  )
+	`, time.Now().UTC(), deviceID, deviceID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+// DeduplicateSessions removes duplicate active sessions across all devices,
+// keeping only the most recent session per device.
+func (d *DB) DeduplicateSessions(ctx context.Context) (int64, error) {
+	result, err := d.sql.ExecContext(ctx, `
+		UPDATE sessions SET status = 'revoked', revoked_at = ?, revoked_by = 'system:cleanup'
+		WHERE status = 'active'
+		  AND id NOT IN (
+		      SELECT id FROM (
+		          SELECT id, ROW_NUMBER() OVER (PARTITION BY device_id ORDER BY authed_at DESC) as rn
+		          FROM sessions WHERE status = 'active'
+		      ) WHERE rn = 1
+		  )
+	`, time.Now().UTC())
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
