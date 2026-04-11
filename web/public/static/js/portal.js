@@ -91,10 +91,18 @@ function tickCountdowns() {
   });
 }
 
-// ── Device list refresh ───────────────────────────────────────────────────────
+// ── Device list refresh (debounced) ──────────────────────────────────────────
+// Debounce prevents cascade: multiple rapid WS events (session.created +
+// peer.added) each triggering a refresh causes a loop. Wait 500ms and
+// only do one refresh if multiple events arrive close together.
+let _refreshTimer = null;
 function refreshDeviceList() {
-  if (document.getElementById('device-list'))
+  if (!document.getElementById('device-list')) return;
+  if (_refreshTimer) clearTimeout(_refreshTimer);
+  _refreshTimer = setTimeout(() => {
+    _refreshTimer = null;
     htmx.ajax('GET', '/', { target: '#device-list', swap: 'innerHTML', select: '#device-list' });
+  }, 500);
 }
 
 // ── WebSocket — single persistent connection ──────────────────────────────────

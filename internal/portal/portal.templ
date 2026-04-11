@@ -250,6 +250,7 @@ templ DeviceActions(dev *db.Device) {
 					hx-vals={ `{"device_id":"` + dev.ID + `"}` }
 					hx-target={ "#device-" + dev.ID }
 					hx-swap="outerHTML"
+					hx-disabled-elt="this"
 				>
 					Activate
 				</button>

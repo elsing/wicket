@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -466,13 +468,22 @@ func (h *Handler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 func clientIP(r *http.Request) string {
+	// X-Real-IP is set by Nginx/Traefik to the single real client IP.
 	if ip := r.Header.Get("X-Real-IP"); ip != "" {
-		return ip
+		return strings.TrimSpace(ip)
 	}
-	if ip := r.Header.Get("X-Forwarded-For"); ip != "" {
-		return ip
+	// X-Forwarded-For may be a comma-separated chain: client, proxy1, proxy2
+	// Take only the first (leftmost) value which is the original client.
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		if idx := strings.Index(xff, ","); idx != -1 {
+			return strings.TrimSpace(xff[:idx])
+		}
+		return strings.TrimSpace(xff)
 	}
-	return r.RemoteAddr
+	// Fall back to direct connection IP, strip port if present.
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
-
-

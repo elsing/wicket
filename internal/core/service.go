@@ -399,6 +399,14 @@ func (s *Service) DisableDevice(ctx context.Context, deviceID, actorUserID strin
 		return fmt.Errorf("disabling device: %w", err)
 	}
 
+	if err := s.db.WriteAuditLog(ctx, &db.AuditLog{
+		UserID:   sql.NullString{String: actorUserID, Valid: actorUserID != ""},
+		DeviceID: sql.NullString{String: deviceID, Valid: true},
+		Event:    "device.disabled",
+		Metadata: db.AuditMeta("device_name", dev.Name),
+	}); err != nil {
+		s.log.Warn("writing device disabled audit log", zap.Error(err))
+	}
 	s.log.Info("device disabled", zap.String("device", dev.Name), zap.String("actor", actorUserID))
 	s.emit(Event{Type: EventPeerRemoved, DeviceID: deviceID, UserID: actorUserID, OwnerID: dev.UserID})
 	return nil
@@ -423,6 +431,14 @@ func (s *Service) DeleteDevice(ctx context.Context, deviceID, actorUserID string
 		return fmt.Errorf("deleting device: %w", err)
 	}
 
+	if err := s.db.WriteAuditLog(ctx, &db.AuditLog{
+		UserID:   sql.NullString{String: actorUserID, Valid: actorUserID != ""},
+		DeviceID: sql.NullString{String: deviceID, Valid: true},
+		Event:    "device.deleted",
+		Metadata: db.AuditMeta("device_name", dev.Name),
+	}); err != nil {
+		s.log.Warn("writing device deleted audit log", zap.Error(err))
+	}
 	s.log.Info("device deleted", zap.String("device", dev.Name), zap.String("actor", actorUserID))
 	s.emit(Event{Type: EventDeviceRejected, DeviceID: deviceID, UserID: actorUserID, OwnerID: dev.UserID})
 	return nil
@@ -497,6 +513,12 @@ func (s *Service) ActivateSession(ctx context.Context, deviceID, userID, ipAddre
 	}
 	if !dev.IsActive {
 		return nil, errors.New("device has been disabled by an administrator")
+	}
+
+	// Idempotency guard — return existing active session if one already exists.
+	// Prevents duplicate sessions from rapid double-clicks or concurrent requests.
+	if existing, err := s.db.GetActiveSessionForDevice(ctx, deviceID); err == nil && existing != nil {
+		return existing, nil
 	}
 
 	group, err := s.db.GetGroupByID(ctx, dev.GroupID)

@@ -3,7 +3,9 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -13,8 +15,8 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/wicket-vpn/wicket/internal/config"
-	"github.com/wicket-vpn/wicket/internal/db"
 	"github.com/wicket-vpn/wicket/internal/core"
+	"github.com/wicket-vpn/wicket/internal/db"
 	"github.com/wicket-vpn/wicket/internal/oidc"
 	"github.com/wicket-vpn/wicket/internal/portal"
 	"github.com/wicket-vpn/wicket/internal/ws"
@@ -212,7 +214,6 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request) {
 
 	http.Redirect(w, r, "/", http.StatusFound)
 }
-
 
 func (h *Handler) handleLocalLogin(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
@@ -672,7 +673,17 @@ func (h *Handler) handleDeleteGroup(w http.ResponseWriter, r *http.Request) {
 
 func clientIP(r *http.Request) string {
 	if ip := r.Header.Get("X-Real-IP"); ip != "" {
-		return ip
+		return strings.TrimSpace(ip)
 	}
-	return r.RemoteAddr
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		if idx := strings.Index(xff, ","); idx != -1 {
+			return strings.TrimSpace(xff[:idx])
+		}
+		return strings.TrimSpace(xff)
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }

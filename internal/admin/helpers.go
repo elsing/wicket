@@ -76,6 +76,7 @@ func humanEvent(event string) string {
 		"peer.removed":     "Peer Removed",
 		"user.login":       "User Login",
 		"user.admin.grant": "Admin Granted",
+		"device.deleted":   "Device Deleted",
 	}
 	if h, ok := m[event]; ok {
 		return h

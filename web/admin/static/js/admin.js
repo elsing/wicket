@@ -65,7 +65,16 @@ function refreshAfterDeviceChange() {
     return;
   }
   if (document.getElementById('devices-tbody')) {
-    htmx.ajax('GET', '/devices', { target: '#devices-tbody', swap: 'innerHTML' });
+    // Fetch just the tbody rows - server detects HX-Request and returns fragment
+    fetch('/devices', {
+      headers: { 'HX-Request': 'true', 'HX-Target': 'devices-tbody' }
+    })
+    .then(r => r.text())
+    .then(html => {
+      const el = document.getElementById('devices-tbody');
+      if (el) el.innerHTML = html;
+    })
+    .catch(e => console.warn('[wicket admin] devices refresh failed', e));
   }
 }
 

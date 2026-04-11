@@ -346,7 +346,7 @@ func (d *DB) ListAllDevices(ctx context.Context) ([]*Device, error) {
 	var devices []*Device
 	for rows.Next() {
 		var dev Device
-		var userEmail, userDisplay, groupName string
+		var userEmail, userDisplay, groupName sql.NullString
 		if err := rows.Scan(
 			&dev.ID, &dev.UserID, &dev.GroupID, &dev.Name,
 			&dev.PublicKey, &dev.AssignedIP,
@@ -356,8 +356,8 @@ func (d *DB) ListAllDevices(ctx context.Context) ([]*Device, error) {
 		); err != nil {
 			return nil, err
 		}
-		dev.User = &User{ID: dev.UserID, Email: userEmail, DisplayName: userDisplay}
-		dev.Group = &Group{ID: dev.GroupID, Name: groupName}
+		dev.User = &User{ID: dev.UserID, Email: userEmail.String, DisplayName: userDisplay.String}
+		dev.Group = &Group{ID: dev.GroupID, Name: groupName.String}
 		devices = append(devices, &dev)
 	}
 	return devices, rows.Err()
@@ -389,7 +389,7 @@ func (d *DB) ListPendingDevices(ctx context.Context) ([]*Device, error) {
 	var devices []*Device
 	for rows.Next() {
 		var dev Device
-		var userEmail, userDisplay, groupName string
+		var userEmail, userDisplay, groupName sql.NullString
 		if err := rows.Scan(
 			&dev.ID, &dev.UserID, &dev.GroupID, &dev.Name,
 			&dev.PublicKey, &dev.AssignedIP,
@@ -399,8 +399,8 @@ func (d *DB) ListPendingDevices(ctx context.Context) ([]*Device, error) {
 		); err != nil {
 			return nil, err
 		}
-		dev.User = &User{ID: dev.UserID, Email: userEmail, DisplayName: userDisplay}
-		dev.Group = &Group{ID: dev.GroupID, Name: groupName}
+		dev.User = &User{ID: dev.UserID, Email: userEmail.String, DisplayName: userDisplay.String}
+		dev.Group = &Group{ID: dev.GroupID, Name: groupName.String}
 		devices = append(devices, &dev)
 	}
 	return devices, rows.Err()
