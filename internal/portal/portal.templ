@@ -227,14 +227,23 @@ templ DeviceActions(dev *db.Device) {
 	<div class="device-actions">
 		if dev.IsApproved && dev.IsActive {
 			if dev.ActiveSession != nil && dev.ActiveSession.IsActive() {
-				<button
-					class="btn btn-sm btn-outline"
-					hx-post={ "/sessions/" + dev.ActiveSession.ID + "/extend" }
-					hx-target={ "#device-" + dev.ID }
-					hx-swap="outerHTML"
-				>
-					Extend
-				</button>
+				{{ canExtend := dev.Group == nil || !dev.Group.MaxExtensions.Valid || int64(dev.ActiveSession.ExtensionCount) < dev.Group.MaxExtensions.Int64 }}
+				if canExtend {
+					<button
+						class="btn btn-sm btn-outline"
+						hx-post={ "/sessions/" + dev.ActiveSession.ID + "/extend" }
+						hx-target={ "#device-" + dev.ID }
+						hx-swap="outerHTML"
+					>
+						if dev.Group != nil && dev.Group.MaxExtensions.Valid {
+							Extend ({ itoa(int(dev.Group.MaxExtensions.Int64 - int64(dev.ActiveSession.ExtensionCount))) } left)
+						} else {
+							Extend
+						}
+					</button>
+				} else {
+					<span class="badge badge-muted" style="font-size:12px">Max extensions reached</span>
+				}
 				<button
 					class="btn btn-sm btn-ghost"
 					hx-delete={ "/sessions/" + dev.ActiveSession.ID }

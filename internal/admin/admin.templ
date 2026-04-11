@@ -615,6 +615,11 @@ templ AdminGroupsPage(data AdminGroupsData) {
 						<p class="form-hint">e.g. 8h, 24h, 168h</p>
 					</div>
 					<div class="form-field">
+						<label>Max Extensions</label>
+						<input type="number" name="max_extensions" class="input" placeholder="Unlimited" min="0"/>
+						<p class="form-hint">How many times a session can be extended. Leave blank for unlimited.</p>
+					</div>
+					<div class="form-field">
 						<label class="toggle-label" style="flex-direction:row;align-items:center;gap:10px">
 							<input type="checkbox" name="is_public" value="true" class="toggle"/>
 							<span>Public (any user can select this group)</span>
@@ -635,6 +640,9 @@ templ GroupCard(g *db.Group, subnets []*db.Subnet, groupSubnets map[string][]str
 				<div style="font-weight:600;font-size:15px">{ g.Name }</div>
 				<div style="font-size:12px;color:var(--text-2);margin-top:2px">
 					{ g.SessionDuration.String() } sessions ·
+					if g.MaxExtensions.Valid {
+						{ itoa(int(g.MaxExtensions.Int64)) } max extensions ·
+					}
 					if g.IsPublic {
 						<span class="badge badge-success" style="font-size:11px">Public</span>
 					} else {
@@ -764,24 +772,53 @@ templ AdminAgentsPage(data AdminAgentsData) {
 templ AdminMetricsPage(data AdminMetricsData) {
 	@AdminLayout("Metrics", data.Session, "metrics") {
 		<div class="page-header">
-			<p class="page-desc">Per-device traffic and connection statistics, sampled every 30 seconds.</p>
+			<p class="page-desc">Per-device traffic and connection stats, sampled every 30 seconds. Charts show 7 days of traffic.</p>
 		</div>
 		<div class="table-wrap card">
 			<table class="table">
 				<thead>
-					<tr><th>Device</th><th>Assigned IP</th><th>Traffic (7d chart)</th></tr>
+					<tr>
+						<th>Device</th>
+						<th>User</th>
+						<th>IP</th>
+						<th>↑ Sent</th>
+						<th>↓ Received</th>
+						<th>Last Handshake</th>
+						<th>7d Traffic</th>
+					</tr>
 				</thead>
 				<tbody>
 					for _, dev := range data.Devices {
-						if dev.IsApproved && dev.IsActive {
+						if dev.IsApproved {
 							<tr>
 								<td class="font-medium">{ dev.Name }</td>
+								<td class="text-muted">
+									if dev.User != nil && dev.User.Email != "" {
+										{ dev.User.Email }
+									}
+								</td>
 								<td><code>{ dev.AssignedIP }</code></td>
+								{{ snap := data.LatestMetrics[dev.ID] }}
+								if snap != nil {
+									<td class="text-muted">{ formatBytes(snap.BytesSent) }</td>
+									<td class="text-muted">{ formatBytes(snap.BytesReceived) }</td>
+									<td class="text-muted">
+										if snap.LastHandshake.Valid {
+											{ timeSince(snap.LastHandshake.Time) }
+										} else {
+											Never
+										}
+									</td>
+								} else {
+									<td class="text-muted">—</td>
+									<td class="text-muted">—</td>
+									<td class="text-muted">No data</td>
+								}
 								<td>
 									<div id={ "chart-" + dev.ID }
 										class="metrics-chart"
 										data-device-id={ dev.ID }
-										style="height:40px;min-width:200px">
+										style="height:40px;min-width:160px">
 									</div>
 								</td>
 							</tr>

@@ -65,16 +65,8 @@ function refreshAfterDeviceChange() {
     return;
   }
   if (document.getElementById('devices-tbody')) {
-    // Fetch just the tbody rows - server detects HX-Request and returns fragment
-    fetch('/devices', {
-      headers: { 'HX-Request': 'true', 'HX-Target': 'devices-tbody' }
-    })
-    .then(r => r.text())
-    .then(html => {
-      const el = document.getElementById('devices-tbody');
-      if (el) el.innerHTML = html;
-    })
-    .catch(e => console.warn('[wicket admin] devices refresh failed', e));
+    // Use htmx.ajax so HTMX processes the new content and wires up hx-* attributes
+    htmx.ajax('GET', '/devices', { target: '#devices-tbody', swap: 'innerHTML' });
   }
 }
 
@@ -116,28 +108,64 @@ function handleEvent(event) {
 
 // ── Metrics sparklines ────────────────────────────────────────────────────────
 window.renderMetricsChart = function(deviceID, containerID) {
-  fetch(`/metrics/${deviceID}`).then(r => r.json()).then(snaps => {
-    if (!snaps || snaps.length < 2) return;
+  fetch(`/metrics/${deviceID}`).then(r => r.json()).then(points => {
+    if (!points || points.length < 2) {
+      const el = document.getElementById(containerID);
+      if (el) el.innerHTML = '<span style="font-size:11px;color:var(--text-3)">No data</span>';
+      return;
+    }
     const el = document.getElementById(containerID);
     if (!el) return;
     const w = el.clientWidth || 200, h = 40;
-    const max = Math.max(...snaps.flatMap(s => [s.bytes_sent||0, s.bytes_received||0]), 1);
+    const max = Math.max(...points.flatMap(p => [p.bytes_sent||0, p.bytes_received||0]), 1);
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
     svg.style.width = '100%';
+    svg.style.overflow = 'visible';
+
+    // Draw filled areas for visual impact
     for (const [key, color] of [['bytes_sent','var(--primary)'],['bytes_received','var(--success)']]) {
-      const pts = snaps.map((s,i) => `${(i/(snaps.length-1))*w},${h-((s[key]||0)/max)*h}`).join(' ');
+      if (points.length < 2) continue;
+      const pts = points.map((p,i) => {
+        const x = (i/(points.length-1))*w;
+        const y = h - ((p[key]||0)/max)*(h-2);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      });
+      // Area fill
+      const area = document.createElementNS('http://www.w3.org/2000/svg','polyline');
+      area.setAttribute('points', [`0,${h}`, ...pts, `${w},${h}`].join(' '));
+      area.setAttribute('fill', color);
+      area.setAttribute('fill-opacity', '0.15');
+      area.setAttribute('stroke', 'none');
+      svg.appendChild(area);
+      // Line
       const line = document.createElementNS('http://www.w3.org/2000/svg','polyline');
-      line.setAttribute('points', pts);
+      line.setAttribute('points', pts.join(' '));
       line.setAttribute('fill','none');
       line.setAttribute('stroke', color);
       line.setAttribute('stroke-width','1.5');
       svg.appendChild(line);
     }
+
+    // Legend
+    const legend = document.createElementNS('http://www.w3.org/2000/svg','text');
+    legend.setAttribute('x', '2');
+    legend.setAttribute('y', '10');
+    legend.setAttribute('font-size', '9');
+    legend.setAttribute('fill', 'var(--text-3)');
+    legend.textContent = `↑ ${fmtRate(Math.max(...points.map(p=>p.bytes_sent||0)))} ↓ ${fmtRate(Math.max(...points.map(p=>p.bytes_received||0)))} peak`;
+    svg.appendChild(legend);
+
     el.innerHTML = '';
     el.appendChild(svg);
   }).catch(() => {});
 };
+
+function fmtRate(bps) {
+  if (bps < 1024) return `${bps.toFixed(0)}B/s`;
+  if (bps < 1024*1024) return `${(bps/1024).toFixed(1)}K/s`;
+  return `${(bps/1024/1024).toFixed(1)}M/s`;
+}
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
 window.showAdminToast = function(message, type = 'info') {

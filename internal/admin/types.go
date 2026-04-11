@@ -20,8 +20,8 @@ type AdminDevicesData struct {
 }
 
 type AdminSessionsData struct {
-	Session        *portal.SessionData
-	Sessions       []*db.Session
+	Session         *portal.SessionData
+	Sessions        []*db.Session
 	ApprovedDevices []*db.Device // approved devices with no active session
 }
 
@@ -55,7 +55,7 @@ type AdminAuditData struct {
 }
 
 type AdminMetricsData struct {
-	Session *portal.SessionData
-	Devices []*db.Device
+	Session       *portal.SessionData
+	Devices       []*db.Device
+	LatestMetrics map[string]*db.MetricSnapshot // deviceID -> latest snapshot
 }
-

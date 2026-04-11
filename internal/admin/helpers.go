@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 )
@@ -96,4 +97,33 @@ func noCacheHeaders(h http.Handler) http.Handler {
 		w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 		h.ServeHTTP(w, r)
 	})
+}
+
+// formatBytes converts a byte count to a human-readable string.
+func formatBytes(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+// timeSince returns a human-readable "X ago" string.
+func timeSince(t time.Time) string {
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	}
 }

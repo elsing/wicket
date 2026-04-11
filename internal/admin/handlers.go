@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -498,7 +499,13 @@ func (h *Handler) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		d = 24 * time.Hour
 	}
-	if _, err := h.svc.DB().CreateGroup(r.Context(), name, r.FormValue("description"), d, nil, r.FormValue("is_public") == "true"); err != nil {
+	var maxExt *int64
+	if v := r.FormValue("max_extensions"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
+			maxExt = &n
+		}
+	}
+	if _, err := h.svc.DB().CreateGroup(r.Context(), name, r.FormValue("description"), d, maxExt, r.FormValue("is_public") == "true"); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -606,7 +613,12 @@ func (h *Handler) handleAuditLog(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	sess := portal.SessionFromContext(r.Context())
 	devices, _ := h.svc.DB().ListAllDevices(r.Context())
-	renderAdminMetrics(w, r, AdminMetricsData{Session: sess, Devices: devices})
+	latest, _ := h.svc.DB().GetLatestMetricPerDevice(r.Context())
+	renderAdminMetrics(w, r, AdminMetricsData{
+		Session:       sess,
+		Devices:       devices,
+		LatestMetrics: latest,
+	})
 }
 
 func (h *Handler) handleDeviceMetrics(w http.ResponseWriter, r *http.Request) {

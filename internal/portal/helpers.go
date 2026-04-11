@@ -3,6 +3,7 @@ package portal
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -44,4 +45,9 @@ func noCacheHeaders(h http.Handler) http.Handler {
 		w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 		h.ServeHTTP(w, r)
 	})
+}
+
+// itoa converts an int to string for use in templates.
+func itoa(n int) string {
+	return strconv.Itoa(n)
 }
