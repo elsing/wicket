@@ -633,34 +633,82 @@ templ AdminGroupsPage(data AdminGroupsData) {
 }
 
 // GroupCard renders a single group card for HTMX outerHTML swaps.
-templ GroupCard(g *db.Group, subnets []*db.Subnet, groupSubnets map[string][]string) {
+templ GroupCard(g *db.Group, subnets []*db.Subnet, groupSubnets map[string][]string, deviceCount int) {
 	<div class="card" id={ "group-" + g.ID } style="padding:20px 24px">
-		<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-			<div>
-				<div style="font-weight:600;font-size:15px">{ g.Name }</div>
-				<div style="font-size:12px;color:var(--text-2);margin-top:2px">
-					if g.SessionDuration == 0 {
-						Unlimited sessions ·
-					} else {
-						{ g.SessionDuration.String() } sessions ·
-					}
-					if g.MaxExtensions.Valid {
-						{ itoa(int(g.MaxExtensions.Int64)) } max extensions ·
-					}
+		<div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:14px;gap:16px">
+			<div style="flex:1;min-width:0">
+				<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+					<span style="font-weight:600;font-size:15px">{ g.Name }</span>
 					if g.IsPublic {
 						<span class="badge badge-success" style="font-size:11px">Public</span>
 					} else {
 						<span class="badge badge-muted" style="font-size:11px">Restricted</span>
 					}
+					<span class="badge badge-muted" style="font-size:11px">
+						{ itoa(deviceCount) } device{ groupPlural(deviceCount) }
+					</span>
+				</div>
+				<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--text-2)">
+					<span>
+						⏱
+						if g.SessionDuration == 0 {
+							∞ unlimited
+						} else {
+							{ g.SessionDuration.String() }
+						}
+					</span>
+					if g.MaxExtensions.Valid {
+						<span>↻ max { itoa(int(g.MaxExtensions.Int64)) } ext</span>
+					} else {
+						<span>↻ unlimited ext</span>
+					}
 				</div>
 			</div>
-			<button class="btn btn-sm btn-ghost" style="color:var(--error)"
-				hx-delete={ "/groups/" + g.ID }
-				hx-target={ "#group-" + g.ID } hx-swap="delete"
-				hx-confirm={ "Delete group \"" + g.Name + "\"? It must have no devices assigned." }>
-				Delete
-			</button>
+			<div style="display:flex;gap:8px;flex-shrink:0">
+				<button class="btn btn-sm btn-outline"
+					data-group-id={ g.ID } onclick="toggleGroupEdit(this.dataset.groupId)">
+					Edit
+				</button>
+				<button class="btn btn-sm btn-ghost" style="color:var(--error-text)"
+					hx-delete={ "/groups/" + g.ID }
+					hx-target={ "#group-" + g.ID } hx-swap="delete"
+					hx-confirm={ "Delete group \"" + g.Name + "\"? Devices must be reassigned first." }>
+					Delete
+				</button>
+			</div>
 		</div>
+
+		<div id={ "edit-" + g.ID } style="display:none;background:var(--bg-2);border-radius:8px;padding:14px;margin-bottom:14px">
+			<form hx-put={ "/groups/" + g.ID }
+				hx-target={ "#group-" + g.ID } hx-swap="outerHTML"
+				style="display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end">
+				<div>
+					<label style="font-size:12px;font-weight:500;color:var(--text-2);display:block;margin-bottom:4px">Name</label>
+					<input type="text" name="name" class="input" value={ g.Name } required/>
+				</div>
+				<div>
+					<label style="font-size:12px;font-weight:500;color:var(--text-2);display:block;margin-bottom:4px">Session Duration (0 = unlimited)</label>
+					if g.SessionDuration == 0 {
+						<input type="text" name="session_duration" class="input" value="0"/>
+					} else {
+						<input type="text" name="session_duration" class="input" value={ g.SessionDuration.String() }/>
+					}
+				</div>
+				<div>
+					<label style="font-size:12px;font-weight:500;color:var(--text-2);display:block;margin-bottom:4px">Max Extensions</label>
+					if g.MaxExtensions.Valid {
+						<input type="number" name="max_extensions" class="input" value={ itoa(int(g.MaxExtensions.Int64)) } min="0" style="width:100px"/>
+					} else {
+						<input type="number" name="max_extensions" class="input" placeholder="∞" min="0" style="width:100px"/>
+					}
+				</div>
+				<div style="grid-column:1/-1;display:flex;gap:8px">
+					<button type="submit" class="btn btn-sm btn-primary">Save</button>
+					<button type="button" class="btn btn-sm btn-ghost" data-group-id={ g.ID } onclick="toggleGroupEdit(this.dataset.groupId)">Cancel</button>
+				</div>
+			</form>
+		</div>
+
 		<div>
 			<div style="font-size:12px;font-weight:500;color:var(--text-2);margin-bottom:8px">SUBNETS</div>
 			<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">
@@ -699,7 +747,7 @@ templ GroupCard(g *db.Group, subnets []*db.Subnet, groupSubnets map[string][]str
 // GroupsList renders just the groups list for HTMX innerHTML swaps.
 templ GroupsList(data AdminGroupsData) {
 	for _, g := range data.Groups {
-		@GroupCard(g, data.Subnets, data.GroupSubnets)
+		@GroupCard(g, data.Subnets, data.GroupSubnets, data.DeviceCounts[g.ID])
 	}
 }
 

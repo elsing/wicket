@@ -20,8 +20,8 @@ type AdminDevicesData struct {
 }
 
 type AdminSessionsData struct {
-	Session         *portal.SessionData
-	Sessions        []*db.Session
+	Session        *portal.SessionData
+	Sessions       []*db.Session
 	ApprovedDevices []*db.Device // approved devices with no active session
 }
 
@@ -36,6 +36,7 @@ type AdminGroupsData struct {
 	Groups       []*db.Group
 	Subnets      []*db.Subnet
 	GroupSubnets map[string][]string // groupID -> []subnetID
+	DeviceCounts map[string]int      // groupID -> device count
 }
 
 type AdminSubnetsData struct {
@@ -55,7 +56,8 @@ type AdminAuditData struct {
 }
 
 type AdminMetricsData struct {
-	Session       *portal.SessionData
-	Devices       []*db.Device
-	LatestMetrics map[string]*db.MetricSnapshot // deviceID -> latest snapshot
+	Session        *portal.SessionData
+	Devices        []*db.Device
+	LatestMetrics  map[string]*db.MetricSnapshot // deviceID -> latest snapshot
 }
+

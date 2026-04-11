@@ -169,6 +169,12 @@ function fmtRate(bps) {
   return `${(bps/1024/1024).toFixed(1)}M/s`;
 }
 
+// ── Group edit toggle ─────────────────────────────────────────────────────────
+window.toggleGroupEdit = function(groupID) {
+  const el = document.getElementById('edit-' + groupID);
+  if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+};
+
 // ── Toast ─────────────────────────────────────────────────────────────────────
 window.showAdminToast = function(message, type = 'info') {
   const colors = {

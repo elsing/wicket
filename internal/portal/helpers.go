@@ -27,11 +27,22 @@ func urlEncode(s string) string {
 	return s
 }
 
-// formatDuration formats a duration as "Xh Ym" for display in templates.
+// formatDuration formats a duration for display. Shows ∞ for durations over a year.
 func formatDuration(d time.Duration) string {
+	if d >= 365*24*time.Hour {
+		return "∞"
+	}
 	d = d.Round(time.Minute)
 	h := int(d.Hours())
 	m := int(d.Minutes()) % 60
+	if h >= 24 {
+		days := h / 24
+		hrs := h % 24
+		if hrs > 0 {
+			return fmt.Sprintf("%dd %dh", days, hrs)
+		}
+		return fmt.Sprintf("%dd", days)
+	}
 	if h > 0 {
 		return fmt.Sprintf("%dh %dm", h, m)
 	}

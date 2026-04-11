@@ -86,8 +86,3 @@ func renderDeviceCard(w http.ResponseWriter, r *http.Request, device *db.Device)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	DeviceCard(device).Render(r.Context(), w) //nolint:errcheck
 }
-
-func renderSessionStatus(w http.ResponseWriter, r *http.Request, session *db.Session) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	SessionStatusFragment(session).Render(r.Context(), w) //nolint:errcheck
-}

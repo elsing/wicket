@@ -127,3 +127,11 @@ func timeSince(t time.Time) string {
 		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
 	}
 }
+
+// groupPlural returns "s" for pluralising "device" based on count.
+func groupPlural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
+}

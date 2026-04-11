@@ -54,7 +54,7 @@ func renderGroupCard(w http.ResponseWriter, r *http.Request, data AdminGroupsDat
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	for _, g := range data.Groups {
 		if g.ID == groupID {
-			GroupCard(g, data.Subnets, data.GroupSubnets).Render(r.Context(), w) //nolint:errcheck
+			GroupCard(g, data.Subnets, data.GroupSubnets, data.DeviceCounts[g.ID]).Render(r.Context(), w) //nolint:errcheck
 			return
 		}
 	}

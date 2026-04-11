@@ -197,3 +197,40 @@ func (d *DB) GetLatestMetricPerDevice(ctx context.Context) (map[string]*MetricSn
 	}
 	return result, rows.Err()
 }
+
+// DeviceCountPerGroup returns a map of groupID -> count of approved devices.
+func (d *DB) DeviceCountPerGroup(ctx context.Context) (map[string]int, error) {
+	rows, err := d.sql.QueryContext(ctx, `
+		SELECT group_id, COUNT(*) as cnt
+		FROM devices
+		WHERE is_approved = 1
+		GROUP BY group_id
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make(map[string]int)
+	for rows.Next() {
+		var groupID string
+		var cnt int
+		if err := rows.Scan(&groupID, &cnt); err != nil {
+			return nil, err
+		}
+		result[groupID] = cnt
+	}
+	return result, rows.Err()
+}
+
+// UpdateGroup updates a group's name, description, session duration and max extensions.
+func (d *DB) UpdateGroup(ctx context.Context, id, name, description string, sessionDuration time.Duration, maxExtensions *int64) error {
+	var maxExt interface{}
+	if maxExtensions != nil {
+		maxExt = *maxExtensions
+	}
+	_, err := d.sql.ExecContext(ctx, `
+		UPDATE groups SET name = ?, description = ?, session_duration = ?, max_extensions = ?
+		WHERE id = ?
+	`, name, description, int64(sessionDuration.Seconds()), maxExt, id)
+	return err
+}

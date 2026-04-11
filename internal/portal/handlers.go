@@ -409,17 +409,29 @@ func (h *Handler) handleActivateGroupSessions(w http.ResponseWriter, r *http.Req
 }
 
 func (h *Handler) handleExtendSession(w http.ResponseWriter, r *http.Request) {
-	session := SessionFromContext(r.Context())
+	userSession := SessionFromContext(r.Context())
 	sessionID := chi.URLParam(r, "sessionID")
 
-	extended, err := h.svc.ExtendSession(r.Context(), sessionID, session.UserID, clientIP(r))
+	extended, err := h.svc.ExtendSession(r.Context(), sessionID, userSession.UserID, clientIP(r))
 	if err != nil {
 		h.log.Warn("extending session", zap.Error(err))
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	renderSessionStatus(w, r, extended)
+	// Return the full device card so the updated expiry and extension count render correctly
+	devices, err := h.svc.GetDevicesForUser(r.Context(), userSession.UserID)
+	if err != nil {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	for _, d := range devices {
+		if d.ActiveSession != nil && d.ActiveSession.ID == extended.ID {
+			renderDeviceCard(w, r, d)
+			return
+		}
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 func (h *Handler) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
@@ -487,3 +499,5 @@ func clientIP(r *http.Request) string {
 	}
 	return host
 }
+
+

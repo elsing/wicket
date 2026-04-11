@@ -112,6 +112,7 @@ func NewHandler(
 
 		r.Get("/groups", h.handleGroups)
 		r.Post("/groups", h.handleCreateGroup)
+		r.Put("/groups/{groupID}", h.handleUpdateGroup)
 		r.Delete("/groups/{groupID}", h.handleDeleteGroup)
 		r.Post("/groups/{groupID}/subnets", h.handleAssignGroupSubnet)
 		r.Delete("/groups/{groupID}/subnets/{subnetID}", h.handleRemoveGroupSubnet)
@@ -471,6 +472,37 @@ func (h *Handler) handleAssignGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+func (h *Handler) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
+	groupID := chi.URLParam(r, "groupID")
+	name := r.FormValue("name")
+	if name == "" {
+		http.Error(w, "name required", http.StatusBadRequest)
+		return
+	}
+	dStr := r.FormValue("session_duration")
+	var d time.Duration
+	if dStr == "0" || dStr == "0h" {
+		d = 0
+	} else {
+		var parseErr error
+		d, parseErr = time.ParseDuration(dStr)
+		if parseErr != nil || d <= 0 {
+			d = 24 * time.Hour
+		}
+	}
+	var maxExt *int64
+	if v := r.FormValue("max_extensions"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
+			maxExt = &n
+		}
+	}
+	if err := h.svc.DB().UpdateGroup(r.Context(), groupID, name, r.FormValue("description"), d, maxExt); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.handleGroups(w, r)
 }
 
 func (h *Handler) handleGroups(w http.ResponseWriter, r *http.Request) {
