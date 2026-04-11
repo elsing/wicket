@@ -298,29 +298,7 @@ func (h *Handler) handleDashboardFragment(w http.ResponseWriter, r *http.Request
 
 func (h *Handler) handleDevices(w http.ResponseWriter, r *http.Request) {
 	sess := portal.SessionFromContext(r.Context())
-	devices, err := h.svc.DB().ListAllDevices(r.Context())
-	if err != nil {
-		h.log.Error("listing devices", zap.Error(err))
-	}
-	for i, d := range devices {
-		h.log.Debug("device row",
-			zap.Int("i", i),
-			zap.String("name", d.Name),
-			zap.String("user_id", d.UserID),
-			zap.String("user_email", func() string {
-				if d.User != nil {
-					return d.User.Email
-				}
-				return "<nil User>"
-			}()),
-			zap.String("group_name", func() string {
-				if d.Group != nil {
-					return d.Group.Name
-				}
-				return "<nil Group>"
-			}()),
-		)
-	}
+	devices, _ := h.svc.DB().ListAllDevices(r.Context())
 	renderAdminDevices(w, r, AdminDevicesData{Session: sess, Devices: devices})
 }
 

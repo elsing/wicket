@@ -362,44 +362,8 @@ templ AdminDevicesPage(data AdminDevicesData) {
 						<th>Actions</th>
 					</tr>
 				</thead>
-				<tbody>
-					for _, dev := range data.Devices {
-						<tr id={ "dev-" + dev.ID }>
-							<td class="font-medium">{ dev.Name }</td>
-							<td class="text-muted">{ dev.UserID }</td>
-							<td class="text-muted">{ dev.GroupID }</td>
-							<td><code>{ dev.AssignedIP }</code></td>
-							<td>
-								if !dev.IsApproved {
-									<span class="badge badge-warning">Pending</span>
-								} else if !dev.IsActive {
-									<span class="badge badge-error">Disabled</span>
-								} else {
-									<span class="badge badge-success">Active</span>
-								}
-							</td>
-							<td class="table-actions">
-								if !dev.IsApproved {
-									<button class="btn btn-sm btn-primary"
-										hx-post={ "/devices/" + dev.ID + "/approve" }
-										hx-target={ "#dev-" + dev.ID } hx-swap="outerHTML">Approve</button>
-									<button class="btn btn-sm btn-ghost"
-										hx-post={ "/devices/" + dev.ID + "/reject" }
-										hx-target={ "#dev-" + dev.ID } hx-swap="delete"
-										hx-confirm={ "Reject \"" + dev.Name + "\"?" }>Reject</button>
-								} else if dev.IsActive {
-									<button class="btn btn-sm btn-ghost"
-										hx-post={ "/devices/" + dev.ID + "/disable" }
-										hx-target={ "#dev-" + dev.ID } hx-swap="outerHTML"
-										hx-confirm={ "Disable \"" + dev.Name + "\"?" }>Disable</button>
-								} else {
-									<button class="btn btn-sm btn-outline"
-										hx-post={ "/devices/" + dev.ID + "/enable" }
-										hx-target={ "#dev-" + dev.ID } hx-swap="outerHTML">Enable</button>
-								}
-							</td>
-						</tr>
-					}
+				<tbody id="devices-tbody">
+					@DeviceTableBody(data.Devices)
 				</tbody>
 			</table>
 		</div>
