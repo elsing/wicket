@@ -528,7 +528,12 @@ func (s *Service) ActivateSession(ctx context.Context, deviceID, userID, ipAddre
 		return nil, fmt.Errorf("getting group: %w", err)
 	}
 
-	expiresAt := time.Now().Add(group.SessionDuration)
+	var expiresAt time.Time
+	if group.SessionDuration == 0 {
+		expiresAt = time.Now().Add(100 * 365 * 24 * time.Hour) // effectively unlimited
+	} else {
+		expiresAt = time.Now().Add(group.SessionDuration)
+	}
 	session, err := s.db.CreateSession(ctx, deviceID, expiresAt, ipAddress)
 	if err != nil {
 		return nil, fmt.Errorf("creating session: %w", err)
@@ -645,7 +650,11 @@ func (s *Service) ExtendSession(ctx context.Context, sessionID, userID, ipAddres
 		)
 	}
 
-	extended, err := s.db.ExtendSession(ctx, sessionID, group.SessionDuration)
+	extendBy := group.SessionDuration
+	if extendBy == 0 {
+		extendBy = 100 * 365 * 24 * time.Hour
+	}
+	extended, err := s.db.ExtendSession(ctx, sessionID, extendBy)
 	if err != nil {
 		return nil, fmt.Errorf("extending session: %w", err)
 	}

@@ -639,7 +639,11 @@ templ GroupCard(g *db.Group, subnets []*db.Subnet, groupSubnets map[string][]str
 			<div>
 				<div style="font-weight:600;font-size:15px">{ g.Name }</div>
 				<div style="font-size:12px;color:var(--text-2);margin-top:2px">
-					{ g.SessionDuration.String() } sessions ·
+					if g.SessionDuration == 0 {
+						Unlimited sessions ·
+					} else {
+						{ g.SessionDuration.String() } sessions ·
+					}
 					if g.MaxExtensions.Valid {
 						{ itoa(int(g.MaxExtensions.Int64)) } max extensions ·
 					}
@@ -774,8 +778,15 @@ templ AdminMetricsPage(data AdminMetricsData) {
 		<div class="page-header">
 			<p class="page-desc">Per-device traffic and connection stats, sampled every 30 seconds. Charts show 7 days of traffic.</p>
 		</div>
-		<div class="table-wrap card">
-			<table class="table">
+		<div id="metrics-content">
+			@MetricsTable(data)
+		</div>
+	}
+}
+
+templ MetricsTable(data AdminMetricsData) {
+	<div class="table-wrap card">
+		<table class="table">
 				<thead>
 					<tr>
 						<th>Device</th>
@@ -826,8 +837,7 @@ templ AdminMetricsPage(data AdminMetricsData) {
 					}
 				</tbody>
 			</table>
-		</div>
-	}
+	</div>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -355,6 +355,13 @@ func (r *Reconciler) sampleMetrics(ctx context.Context) {
 			snap.LastHandshake = sql.NullTime{Time: stat.LastHandshake, Valid: true}
 		}
 
+		r.log.Debug("metric sample",
+			zap.String("device", dev.Name),
+			zap.Int64("bytes_sent", stat.BytesSent),
+			zap.Int64("bytes_received", stat.BytesReceived),
+			zap.Time("last_handshake", stat.LastHandshake),
+		)
+
 		if err := r.db.InsertMetricSnapshot(ctx, snap); err != nil {
 			r.log.Error("reconciler: inserting metric snapshot", zap.Error(err))
 		}

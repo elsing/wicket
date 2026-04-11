@@ -126,6 +126,7 @@ func NewHandler(
 
 		r.Get("/audit", h.handleAuditLog)
 		r.Get("/metrics", h.handleMetrics)
+		r.Get("/metrics/fragment", h.handleMetricsFragment)
 		r.Get("/metrics/{deviceID}", h.handleDeviceMetrics)
 	})
 
@@ -495,9 +496,16 @@ func (h *Handler) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "name is required", http.StatusBadRequest)
 		return
 	}
-	d, err := time.ParseDuration(r.FormValue("session_duration"))
-	if err != nil {
-		d = 24 * time.Hour
+	dStr := r.FormValue("session_duration")
+	var d time.Duration
+	if dStr == "0" || dStr == "0h" || dStr == "unlimited" {
+		d = 0 // 0 = unlimited — ActivateSession treats 0 duration as no expiry
+	} else {
+		var parseErr error
+		d, parseErr = time.ParseDuration(dStr)
+		if parseErr != nil || d <= 0 {
+			d = 24 * time.Hour
+		}
 	}
 	var maxExt *int64
 	if v := r.FormValue("max_extensions"); v != "" {
@@ -621,6 +629,17 @@ func (h *Handler) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handler) handleMetricsFragment(w http.ResponseWriter, r *http.Request) {
+	devices, _ := h.svc.DB().ListAllDevices(r.Context())
+	latest, _ := h.svc.DB().GetLatestMetricPerDevice(r.Context())
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	MetricsTable(AdminMetricsData{
+		Session:       portal.SessionFromContext(r.Context()),
+		Devices:       devices,
+		LatestMetrics: latest,
+	}).Render(r.Context(), w) //nolint:errcheck
+}
+
 func (h *Handler) handleDeviceMetrics(w http.ResponseWriter, r *http.Request) {
 	deviceID := chi.URLParam(r, "deviceID")
 	since := time.Now().Add(-7 * 24 * time.Hour)
@@ -629,8 +648,40 @@ func (h *Handler) handleDeviceMetrics(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+
+	// Convert cumulative byte counters to per-interval deltas.
+	// WireGuard reports total bytes since peer was added, not a rate.
+	// Deltas give meaningful sparklines showing when traffic occurred.
+	type point struct {
+		Time          string  `json:"t"`
+		BytesSent     float64 `json:"bytes_sent"`
+		BytesReceived float64 `json:"bytes_received"`
+	}
+	points := make([]point, 0, len(snaps))
+	for i := 1; i < len(snaps); i++ {
+		prev, cur := snaps[i-1], snaps[i]
+		dt := cur.RecordedAt.Sub(prev.RecordedAt).Seconds()
+		if dt <= 0 {
+			dt = 30
+		}
+		// Rate in bytes/sec. Guard against counter resets (negative deltas).
+		sent := float64(cur.BytesSent-prev.BytesSent) / dt
+		recv := float64(cur.BytesReceived-prev.BytesReceived) / dt
+		if sent < 0 {
+			sent = 0
+		}
+		if recv < 0 {
+			recv = 0
+		}
+		points = append(points, point{
+			Time:          cur.RecordedAt.Format("15:04"),
+			BytesSent:     sent,
+			BytesReceived: recv,
+		})
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(snaps) //nolint:errcheck
+	json.NewEncoder(w).Encode(points) //nolint:errcheck
 }
 
 func (h *Handler) handleWebSocket(w http.ResponseWriter, r *http.Request) {

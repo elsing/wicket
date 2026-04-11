@@ -99,9 +99,11 @@ function handleEvent(event) {
       break;
     case 'peer.added':
       showToast('WireGuard peer added', 'success');
+      setTimeout(refreshMetrics, 2000); // give WG time to report first stats
       break;
     case 'peer.removed':
       showToast('WireGuard peer removed', 'info');
+      setTimeout(refreshMetrics, 1000);
       break;
   }
 }
@@ -189,20 +191,51 @@ window.showAdminToast = function(message, type = 'info') {
 
 function showToast(msg, type) { window.showAdminToast(msg, type); }
 
+function initCharts() {
+  document.querySelectorAll('.metrics-chart').forEach(el => {
+    if (el.dataset.deviceId) window.renderMetricsChart(el.dataset.deviceId, el.id);
+  });
+}
+
+function refreshMetrics() {
+  if (!document.getElementById('metrics-content')) return;
+  fetch('/metrics/fragment', { headers: { 'HX-Request': 'true' } })
+    .then(r => r.text())
+    .then(html => {
+      const el = document.getElementById('metrics-content');
+      if (el) {
+        el.innerHTML = html;
+        initCharts();
+      }
+    })
+    .catch(() => {});
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   connectWS();
-  document.querySelectorAll('.metrics-chart').forEach(el => {
-    if (el.dataset.deviceId) window.renderMetricsChart(el.dataset.deviceId, el.id);
-  });
+  initCharts();
+
+  // Auto-refresh metrics every 30s when on that page
+  if (document.getElementById('metrics-content')) {
+    if (window._metricsInterval) clearInterval(window._metricsInterval);
+    window._metricsInterval = setInterval(refreshMetrics, 30000);
+  }
 });
 
-// Reconnect WS after HTMX swaps (if somehow lost) and re-init charts
 document.body.addEventListener('htmx:afterSwap', () => {
   connectWS();
-  document.querySelectorAll('.metrics-chart').forEach(el => {
-    if (el.dataset.deviceId) window.renderMetricsChart(el.dataset.deviceId, el.id);
-  });
+  initCharts();
+  // Start/stop metrics polling based on whether we are on the metrics page
+  if (document.getElementById('metrics-content')) {
+    if (!window._metricsInterval)
+      window._metricsInterval = setInterval(refreshMetrics, 30000);
+  } else {
+    if (window._metricsInterval) {
+      clearInterval(window._metricsInterval);
+      window._metricsInterval = null;
+    }
+  }
 });
 
 })(); // end IIFE
