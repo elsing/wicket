@@ -178,6 +178,7 @@ templ DashboardContent(data AdminDashboardData) {
 		</section>
 	}
 
+
 templ PendingDevicesTable(devices []*db.Device) {
 	<div class="table-wrap card">
 		<table class="table">
@@ -382,7 +383,7 @@ templ AdminDevicesPage(data AdminDevicesData) {
 								if !dev.IsApproved {
 									<button class="btn btn-sm btn-primary"
 										hx-post={ "/devices/" + dev.ID + "/approve" }
-										hx-target={ "#dev-" + dev.ID } hx-swap="delete">Approve</button>
+										hx-target={ "#dev-" + dev.ID } hx-swap="outerHTML">Approve</button>
 									<button class="btn btn-sm btn-ghost"
 										hx-post={ "/devices/" + dev.ID + "/reject" }
 										hx-target={ "#dev-" + dev.ID } hx-swap="delete"

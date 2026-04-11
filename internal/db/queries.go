@@ -596,7 +596,7 @@ func (d *DB) ListActiveSessions(ctx context.Context) ([]*Session, error) {
 	var sessions []*Session
 	for rows.Next() {
 		var s Session
-		var deviceName, userEmail string
+		var deviceName, userEmail sql.NullString
 		if err := rows.Scan(
 			&s.ID, &s.DeviceID, &s.AuthedAt, &s.ExpiresAt,
 			&s.ExtendedAt, &s.ExtensionCount,
@@ -606,8 +606,8 @@ func (d *DB) ListActiveSessions(ctx context.Context) ([]*Session, error) {
 		); err != nil {
 			return nil, err
 		}
-		s.DeviceName = deviceName
-		s.UserEmail = userEmail
+		s.DeviceName = deviceName.String
+		s.UserEmail = userEmail.String
 		sessions = append(sessions, &s)
 	}
 	return sessions, rows.Err()
@@ -626,7 +626,6 @@ func scanSession(row *sql.Row) (*Session, error) {
 	}
 	return &s, err
 }
-
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Agents
@@ -794,7 +793,7 @@ func (d *DB) ListAuditLog(ctx context.Context, limit int) ([]*AuditLog, error) {
 	var entries []*AuditLog
 	for rows.Next() {
 		var e AuditLog
-		var userEmail, deviceName string
+		var userEmail, deviceName sql.NullString
 		if err := rows.Scan(
 			&e.ID, &e.UserID, &e.DeviceID, &e.AgentID,
 			&e.Event, &e.Metadata, &e.IPAddress, &e.CreatedAt,
@@ -802,8 +801,8 @@ func (d *DB) ListAuditLog(ctx context.Context, limit int) ([]*AuditLog, error) {
 		); err != nil {
 			return nil, err
 		}
-		e.UserEmail = userEmail
-		e.DeviceName = deviceName
+		e.UserEmail = userEmail.String
+		e.DeviceName = deviceName.String
 		entries = append(entries, &e)
 	}
 	return entries, rows.Err()

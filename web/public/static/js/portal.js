@@ -29,13 +29,28 @@ window.copyConfig = function(btn) {
 window.toggleQR = function(btn) {
   const container = document.getElementById('qr-container');
   if (container.style.display !== 'none') { container.style.display = 'none'; return; }
-  const canvas = document.getElementById('qr-canvas');
-  canvas.innerHTML = '';
-  if (typeof QRCode !== 'undefined') {
-    new QRCode(canvas, { text: btn.dataset.config, width: 220, height: 220,
-      colorDark: '#000', colorLight: '#fff', correctLevel: QRCode.CorrectLevel.M });
+  const el = document.getElementById('qr-canvas');
+  el.innerHTML = ''; // clear previous QR
+  if (typeof QRCode === 'undefined') {
+    el.textContent = 'QR library not loaded';
+    container.style.display = 'block';
+    return;
   }
-  container.style.display = 'block';
+  try {
+    new QRCode(el, {
+      text: btn.dataset.config,
+      width: 220,
+      height: 220,
+      colorDark: '#000000',
+      colorLight: '#ffffff',
+      correctLevel: QRCode.CorrectLevel.M,
+    });
+    container.style.display = 'block';
+  } catch(e) {
+    console.error('QR generation failed:', e);
+    el.textContent = 'QR generation failed';
+    container.style.display = 'block';
+  }
 };
 
 // ── Live countdown timers ─────────────────────────────────────────────────────
