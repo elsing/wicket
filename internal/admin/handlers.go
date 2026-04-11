@@ -13,8 +13,8 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/wicket-vpn/wicket/internal/config"
-	"github.com/wicket-vpn/wicket/internal/core"
 	"github.com/wicket-vpn/wicket/internal/db"
+	"github.com/wicket-vpn/wicket/internal/core"
 	"github.com/wicket-vpn/wicket/internal/oidc"
 	"github.com/wicket-vpn/wicket/internal/portal"
 	"github.com/wicket-vpn/wicket/internal/ws"
@@ -74,7 +74,16 @@ func NewHandler(
 	r.Post("/auth/logout", h.handleLogout)
 
 	r.Group(func(r chi.Router) {
-		r.Use(h.sessions.Middleware("/auth/login"))
+		r.Use(h.sessions.Middleware("/auth/login", func(ctx context.Context, userID string) bool {
+			// For local admin accounts, UserID is the local_admin ID — check both tables
+			user, err := h.svc.DB().GetUserByID(ctx, userID)
+			if err == nil && user != nil && user.IsActive && user.IsAdmin {
+				return true
+			}
+			// Check local admin table
+			_, err = h.svc.DB().GetLocalAdminByID(ctx, userID)
+			return err == nil
+		}))
 		r.Use(portal.RequireAdmin)
 
 		r.Get("/", h.handleDashboard)
@@ -203,6 +212,7 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request) {
 
 	http.Redirect(w, r, "/", http.StatusFound)
 }
+
 
 func (h *Handler) handleLocalLogin(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {

@@ -138,15 +138,22 @@ func (sm *SessionManager) Clear(w http.ResponseWriter) {
 	})
 }
 
+// UserValidator checks whether a user ID still exists and is active in the DB.
+// If nil, no DB check is performed (cookie validity alone is sufficient).
+type UserValidator func(ctx context.Context, userID string) bool
+
 // Middleware validates the session cookie on each request.
 // On success, the SessionData is injected into the request context.
 // On failure, the user is redirected to loginPath.
-func (sm *SessionManager) Middleware(loginPath string) func(http.Handler) http.Handler {
+func (sm *SessionManager) Middleware(loginPath string, validator ...UserValidator) func(http.Handler) http.Handler {
+	var validate UserValidator
+	if len(validator) > 0 {
+		validate = validator[0]
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			session, err := sm.Read(r)
 			if err != nil {
-				// Clear any stale/invalid cookie before redirecting.
 				sm.Clear(w)
 				redirectURL := loginPath
 				if r.URL.RequestURI() != "/" {
@@ -155,6 +162,13 @@ func (sm *SessionManager) Middleware(loginPath string) func(http.Handler) http.H
 					)
 				}
 				http.Redirect(w, r, redirectURL, http.StatusFound)
+				return
+			}
+			// Verify the user still exists in the DB.
+			// This catches stale cookies after a DB wipe or user deletion.
+			if validate != nil && !validate(r.Context(), session.UserID) {
+				sm.Clear(w)
+				http.Redirect(w, r, loginPath, http.StatusFound)
 				return
 			}
 			ctx := context.WithValue(r.Context(), ctxKeySession, session)

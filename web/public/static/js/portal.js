@@ -1,65 +1,56 @@
 // Wicket public portal JS
+// Uses window properties to survive HTMX swaps and script re-executions.
+
+(function() { // IIFE prevents re-declaration errors
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
-(function () {
-  const stored = localStorage.getItem('theme');
-  if (stored) document.documentElement.setAttribute('data-theme', stored);
-})();
+const stored = localStorage.getItem('theme');
+if (stored) document.documentElement.setAttribute('data-theme', stored);
 
-function toggleTheme() {
-  const current = document.documentElement.getAttribute('data-theme');
-  const next = current === 'dark' ? 'light' : 'dark';
+window.toggleTheme = function() {
+  const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
   document.documentElement.setAttribute('data-theme', next);
   localStorage.setItem('theme', next);
-}
+};
 
 // ── Copy config ───────────────────────────────────────────────────────────────
-function copyConfig(btn) {
+window.copyConfig = function(btn) {
   const config = btn.dataset.config;
   if (!config) return;
   navigator.clipboard.writeText(config).then(() => {
-    const original = btn.innerHTML;
+    const orig = btn.innerHTML;
     btn.innerHTML = '✓ Copied!';
     btn.disabled = true;
-    setTimeout(() => { btn.innerHTML = original; btn.disabled = false; }, 2000);
-  }).catch(() => alert('Could not copy — please select and copy manually.'));
-}
+    setTimeout(() => { btn.innerHTML = orig; btn.disabled = false; }, 2000);
+  }).catch(() => alert('Could not copy — select and copy manually.'));
+};
 
 // ── QR Code ───────────────────────────────────────────────────────────────────
-function toggleQR(btn) {
+window.toggleQR = function(btn) {
   const container = document.getElementById('qr-container');
-  if (container.style.display !== 'none') {
-    container.style.display = 'none';
-    return;
-  }
-  const config = btn.dataset.config;
+  if (container.style.display !== 'none') { container.style.display = 'none'; return; }
   const canvas = document.getElementById('qr-canvas');
   canvas.innerHTML = '';
   if (typeof QRCode !== 'undefined') {
-    new QRCode(canvas, {
-      text: config, width: 220, height: 220,
-      colorDark: '#000', colorLight: '#fff',
-      correctLevel: QRCode.CorrectLevel.M,
-    });
+    new QRCode(canvas, { text: btn.dataset.config, width: 220, height: 220,
+      colorDark: '#000', colorLight: '#fff', correctLevel: QRCode.CorrectLevel.M });
   }
   container.style.display = 'block';
-}
+};
 
 // ── Live countdown timers ─────────────────────────────────────────────────────
 function startCountdowns() {
-  if (window._countdownInterval) clearInterval(window._countdownInterval);
-  window._countdownInterval = setInterval(tickCountdowns, 1000);
-  tickCountdowns(); // immediate first tick
+  if (window._wicketCountdown) clearInterval(window._wicketCountdown);
+  window._wicketCountdown = setInterval(tickCountdowns, 1000);
+  tickCountdowns();
 }
 
 function tickCountdowns() {
   document.querySelectorAll('.session-badge[data-expires-at]').forEach(el => {
-    const expiresAt = new Date(el.dataset.expiresAt);
-    const remaining = expiresAt - Date.now();
+    const remaining = new Date(el.dataset.expiresAt) - Date.now();
     if (remaining <= 0) {
       el.textContent = 'Session expired';
-      el.classList.remove('badge-success');
-      el.classList.add('badge-muted');
+      el.classList.replace('badge-success', 'badge-muted');
       el.removeAttribute('data-expires-at');
       refreshDeviceList();
       return;
@@ -69,12 +60,10 @@ function tickCountdowns() {
     const s = Math.floor((remaining % 60000) / 1000);
     if (h > 0) {
       el.textContent = `Active · ${h}h ${m}m`;
-      el.style.background = '';
-      el.style.color = '';
+      el.style.cssText = '';
     } else if (m >= 5) {
       el.textContent = `Active · ${m}m ${s}s`;
-      el.style.background = '';
-      el.style.color = '';
+      el.style.cssText = '';
     } else if (m > 0) {
       el.textContent = `Active · ${m}m ${s}s`;
       el.style.background = 'var(--warning-light)';
@@ -89,82 +78,73 @@ function tickCountdowns() {
 
 // ── Device list refresh ───────────────────────────────────────────────────────
 function refreshDeviceList() {
-  const list = document.getElementById('device-list');
-  if (!list) return;
-  htmx.ajax('GET', '/', { target: '#device-list', swap: 'innerHTML', select: '#device-list' });
+  if (document.getElementById('device-list'))
+    htmx.ajax('GET', '/', { target: '#device-list', swap: 'innerHTML', select: '#device-list' });
 }
 
-// ── WebSocket ─────────────────────────────────────────────────────────────────
-let ws = null;
-let wsReconnect = null;
-
+// ── WebSocket — single persistent connection ──────────────────────────────────
 function connectWS() {
-  if (wsReconnect) { clearTimeout(wsReconnect); wsReconnect = null; }
+  if (window.wicketWS && (window.wicketWS.readyState === WebSocket.OPEN ||
+                           window.wicketWS.readyState === WebSocket.CONNECTING)) {
+    return; // already connected
+  }
+
+  if (window.wicketWSReconnect) clearTimeout(window.wicketWSReconnect);
+
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(`${proto}//${location.host}/ws`);
+  const ws = new WebSocket(`${proto}//${location.host}/ws`);
+  window.wicketWS = ws;
 
-  ws.onopen = () => console.log('[wicket] WS connected');
-
-  ws.onmessage = (evt) => {
-    try { handleEvent(JSON.parse(evt.data)); } catch(e) {}
+  ws.onopen = () => {
+    console.log('[wicket] WS connected');
+    if (window.wicketWSKeepalive) clearInterval(window.wicketWSKeepalive);
+    window.wicketWSKeepalive = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({type:'ping'}));
+    }, 25000);
   };
 
-  // Send a ping from client every 25s to keep connection alive through
-  // browser tab throttling and proxy idle timeouts.
-  let keepaliveInterval = null;
+  ws.onmessage = (evt) => {
+    try {
+      const event = JSON.parse(evt.data);
+      if (event.type === 'ping') return;
+      console.log('[wicket]', event.type, event);
+      handleEvent(event);
+    } catch(e) {}
+  };
 
-  ws.onopen = (ws.onopen || function(){}).bind(ws);
-  const _onopen = ws.onopen;
-
-  ws.addEventListener('open', () => {
-    if (keepaliveInterval) clearInterval(keepaliveInterval);
-    keepaliveInterval = setInterval(() => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({type: 'ping'}));
-      }
-    }, 25000);
-  });
-
-  ws.onclose = () => {
-    console.log('[wicket] WS disconnected, reconnecting in 5s...');
-    wsReconnect = setTimeout(connectWS, 5000);
+  ws.onclose = (e) => {
+    console.log('[wicket] WS closed', e.code, '— reconnect in 5s');
+    if (window.wicketWSKeepalive) clearInterval(window.wicketWSKeepalive);
+    window.wicketWSReconnect = setTimeout(connectWS, 5000);
   };
 
   ws.onerror = () => ws.close();
 }
 
 function handleEvent(event) {
-  console.log('[wicket]', event.type, event);
+  console.log('[wicket] event:', event.type);
   switch (event.type) {
     case 'device.created':
-      // New device was just added — refresh so it appears in the list
-      refreshDeviceList();
-      break;
     case 'device.approved':
       refreshDeviceList();
-      showToast('Your device has been approved!', 'success');
+      if (event.type === 'device.approved') showToast('Your device has been approved!', 'success');
       break;
     case 'device.rejected':
     case 'peer.removed':
-      refreshDeviceList();
-      break;
-    case 'session.created':
-      refreshDeviceList();
-      showToast('VPN session activated', 'success');
-      break;
     case 'session.revoked':
     case 'session.expired':
       refreshDeviceList();
       break;
+    case 'session.created':
     case 'peer.added':
       refreshDeviceList();
-      showToast('VPN tunnel is up', 'success');
+      if (event.type === 'peer.added') showToast('VPN tunnel is up', 'success');
       break;
   }
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
-function showToast(message, type = 'info') {
+window.showToast = function(message, type = 'info') {
   const colors = {
     success: { bg: 'var(--success-light)', color: 'var(--success-text)' },
     warning: { bg: 'var(--warning-light)', color: 'var(--warning-text)' },
@@ -181,11 +161,19 @@ function showToast(message, type = 'info') {
   });
   document.body.appendChild(toast);
   setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300); }, 4500);
-}
+};
+
+function showToast(msg, type) { window.showToast(msg, type); }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   startCountdowns();
-  document.body.addEventListener('htmx:afterSwap', startCountdowns);
   connectWS();
 });
+
+document.body.addEventListener('htmx:afterSwap', () => {
+  startCountdowns();
+  connectWS(); // no-op if already connected
+});
+
+})(); // end IIFE

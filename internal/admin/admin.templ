@@ -18,7 +18,7 @@ templ AdminLayout(title string, session *portal.SessionData, activeNav string) {
 		<script src="https://unpkg.com/htmx.org@2.0.0/dist/htmx.min.js" defer></script>
 		<link rel="stylesheet" href="/static/css/admin.css"/>
 	</head>
-	<body hx-boost="true">
+	<body>
 	<div class="admin-shell">
 		<aside class="sidebar">
 			<div class="sidebar-brand">
@@ -177,7 +177,6 @@ templ DashboardContent(data AdminDashboardData) {
 			</div>
 		</section>
 	}
-
 
 templ PendingDevicesTable(devices []*db.Device) {
 	<div class="table-wrap card">
@@ -845,7 +844,7 @@ templ AdminLocalLoginPage(errorMsg string) {
 		<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"/>
 		<link rel="stylesheet" href="/static/css/admin.css"/>
 	</head>
-	<body hx-boost="true">
+	<body>
 	<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px">
 		<div class="card" style="width:100%;max-width:380px;padding:40px 36px;text-align:center">
 			<svg style="width:40px;height:40px;color:var(--primary);margin:0 auto 20px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

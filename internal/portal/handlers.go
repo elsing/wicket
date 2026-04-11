@@ -74,7 +74,10 @@ func NewHandler(
 
 	// Authenticated routes
 	r.Group(func(r chi.Router) {
-		r.Use(h.sessions.Middleware("/auth/login"))
+		r.Use(h.sessions.Middleware("/auth/login", func(ctx context.Context, userID string) bool {
+			user, err := h.svc.DB().GetUserByID(ctx, userID)
+			return err == nil && user != nil && user.IsActive
+		}))
 
 		r.Get("/", h.handleDashboard)
 		r.Get("/ws", h.handleWebSocket)
@@ -471,3 +474,5 @@ func clientIP(r *http.Request) string {
 	}
 	return r.RemoteAddr
 }
+
+

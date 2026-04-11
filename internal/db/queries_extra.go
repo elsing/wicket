@@ -121,3 +121,15 @@ func (d *DB) ListGroupSubnets(ctx context.Context) (map[string][]string, error) 
 	}
 	return result, rows.Err()
 }
+
+// GetLocalAdminByID returns a local admin account by ID.
+func (d *DB) GetLocalAdminByID(ctx context.Context, id string) (*LocalAdmin, error) {
+	row := d.sql.QueryRowContext(ctx,
+		`SELECT id, username, password_hash, created_at FROM local_admins WHERE id = ?`, id)
+	var a LocalAdmin
+	err := row.Scan(&a.ID, &a.Username, &a.PasswordHash, &a.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &a, nil
+}

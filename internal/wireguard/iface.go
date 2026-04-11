@@ -94,26 +94,31 @@ func getIfaceAddr(iface string) string {
 	return ""
 }
 
-// ensureIPTables sets up masquerade and forwarding rules if not already present.
+// ensureIPTables sets up forwarding rules for the WireGuard interface.
+// We do NOT add NAT/masquerade — the server acts as a pure IP router.
+// Your upstream router/firewall needs a static route:
+//   <vpn-subnet> via <this-server-ip>
+// That way VPN clients appear with their real VPN IPs to the rest of the network.
 func ensureIPTables(iface, vpnNet string, log *zap.Logger) {
-	rules := [][]string{
-		{"iptables", "-t", "nat", "-C", "POSTROUTING", "-s", vpnNet, "!", "-o", iface, "-j", "MASQUERADE"},
+	// Only need FORWARD rules — no masquerade
+	fwdRules := [][]string{
 		{"iptables", "-C", "FORWARD", "-i", iface, "-j", "ACCEPT"},
 		{"iptables", "-C", "FORWARD", "-o", iface, "-j", "ACCEPT"},
 	}
-	add := [][]string{
-		{"iptables", "-t", "nat", "-A", "POSTROUTING", "-s", vpnNet, "!", "-o", iface, "-j", "MASQUERADE"},
+	addRules := [][]string{
 		{"iptables", "-A", "FORWARD", "-i", iface, "-j", "ACCEPT"},
 		{"iptables", "-A", "FORWARD", "-o", iface, "-j", "ACCEPT"},
 	}
-	for i, check := range rules {
+	for i, check := range fwdRules {
 		if run(check...) != nil {
-			// Rule doesn't exist — add it
-			if err := run(add[i]...); err != nil {
-				log.Warn("adding iptables rule", zap.Strings("rule", add[i]), zap.Error(err))
+			if err := run(addRules[i]...); err != nil {
+				log.Warn("adding iptables FORWARD rule", zap.Strings("rule", addRules[i]), zap.Error(err))
 			}
 		}
 	}
+	log.Info("routing mode: pure IP router (no NAT) — ensure upstream has static route",
+		zap.String("vpn_subnet", vpnNet),
+	)
 }
 
 func run(args ...string) error {

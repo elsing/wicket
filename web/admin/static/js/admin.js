@@ -1,29 +1,69 @@
 // Wicket admin portal JS
+// Uses window.wicketWS so the connection persists across HTMX partial swaps
+// and script re-executions without "already declared" errors.
+
+(function() { // IIFE prevents re-declaration errors on script reload
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
-(function () {
-  const stored = localStorage.getItem('theme');
-  if (stored) document.documentElement.setAttribute('data-theme', stored);
-})();
+const stored = localStorage.getItem('theme');
+if (stored) document.documentElement.setAttribute('data-theme', stored);
 
-function toggleTheme() {
-  const current = document.documentElement.getAttribute('data-theme');
-  const next = current === 'dark' ? 'light' : 'dark';
+window.toggleTheme = function() {
+  const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
   document.documentElement.setAttribute('data-theme', next);
   localStorage.setItem('theme', next);
+};
+
+// ── WebSocket — single persistent connection ──────────────────────────────────
+// Stored on window so it survives HTMX swaps and script re-runs.
+function connectWS() {
+  // Already connected — do nothing
+  if (window.wicketWS && (window.wicketWS.readyState === WebSocket.OPEN ||
+                           window.wicketWS.readyState === WebSocket.CONNECTING)) {
+    return;
+  }
+
+  if (window.wicketWSReconnect) { clearTimeout(window.wicketWSReconnect); }
+
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(`${proto}//${location.host}/ws`);
+  window.wicketWS = ws;
+
+  ws.onopen = () => {
+    console.log('[wicket admin] WS connected');
+    document.querySelectorAll('.live-dot').forEach(d => d.style.background = 'var(--success)');
+    // Client keepalive every 25s to survive proxy idle timeouts
+    if (window.wicketWSKeepalive) clearInterval(window.wicketWSKeepalive);
+    window.wicketWSKeepalive = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({type:'ping'}));
+    }, 25000);
+  };
+
+  ws.onmessage = (evt) => {
+    try {
+      const event = JSON.parse(evt.data);
+      if (event.type === 'ping') return; // ignore server pings
+      console.log('[wicket admin]', event.type, event);
+      handleEvent(event);
+    } catch(e) {}
+  };
+
+  ws.onclose = (e) => {
+    console.log('[wicket admin] WS closed', e.code, '— reconnect in 5s');
+    if (window.wicketWSKeepalive) clearInterval(window.wicketWSKeepalive);
+    document.querySelectorAll('.live-dot').forEach(d => d.style.background = 'var(--error)');
+    window.wicketWSReconnect = setTimeout(connectWS, 5000);
+  };
+
+  ws.onerror = () => ws.close();
 }
 
 // ── Refresh helpers ───────────────────────────────────────────────────────────
-// Each function checks which elements exist on the current page and refreshes
-// whatever is relevant. The admin may be on dashboard, devices, sessions etc.
-
 function refreshAfterDeviceChange() {
-  // Dashboard: refresh entire dashboard content (stats + pending)
   if (document.getElementById('dashboard-content')) {
     htmx.ajax('GET', '/dashboard/fragment', { target: '#dashboard-content', swap: 'innerHTML' });
     return;
   }
-  // Devices page: refresh the full table body
   if (document.getElementById('devices-tbody')) {
     htmx.ajax('GET', '/devices', { target: '#devices-tbody', swap: 'innerHTML' });
   }
@@ -33,60 +73,6 @@ function refreshAfterSessionChange() {
   if (document.getElementById('sessions-table')) {
     htmx.ajax('GET', '/sessions', { target: '#sessions-table', swap: 'innerHTML' });
   }
-}
-
-// ── WebSocket ─────────────────────────────────────────────────────────────────
-let ws = null;
-let wsReconnectTimer = null;
-
-function connectWS() {
-  if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
-
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const url = `${proto}//${location.host}/ws`;
-  console.log('[wicket admin] connecting WS:', url);
-  ws = new WebSocket(url);
-
-  ws.onopen = () => {
-    console.log('[wicket admin] WS connected');
-    document.querySelectorAll('.live-dot').forEach(d => d.style.background = 'var(--success)');
-  };
-
-  ws.onmessage = (evt) => {
-    try {
-      const event = JSON.parse(evt.data);
-      console.log('[wicket admin] event:', event.type, event);
-      handleEvent(event);
-    } catch(e) { console.warn('[wicket admin] bad WS message', evt.data); }
-  };
-
-  // Send a ping from client every 25s to keep connection alive through
-  // browser tab throttling and proxy idle timeouts.
-  let keepaliveInterval = null;
-
-  ws.onopen = (ws.onopen || function(){}).bind(ws);
-  const _onopen = ws.onopen;
-
-  ws.addEventListener('open', () => {
-    if (keepaliveInterval) clearInterval(keepaliveInterval);
-    keepaliveInterval = setInterval(() => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({type: 'ping'}));
-      }
-    }, 25000);
-  });
-
-  ws.onclose = (e) => {
-    console.log('[wicket admin] WS closed', e.code, e.reason, '— reconnecting in 5s');
-    document.querySelectorAll('.live-dot').forEach(d => d.style.background = 'var(--error)');
-    if (keepaliveInterval) { clearInterval(keepaliveInterval); keepaliveInterval = null; }
-    wsReconnectTimer = setTimeout(connectWS, 5000);
-  };
-
-  ws.onerror = (e) => {
-    console.warn('[wicket admin] WS error', e);
-    ws.close();
-  };
 }
 
 function handleEvent(event) {
@@ -120,36 +106,32 @@ function handleEvent(event) {
 }
 
 // ── Metrics sparklines ────────────────────────────────────────────────────────
-function renderMetricsChart(deviceID, containerID) {
+window.renderMetricsChart = function(deviceID, containerID) {
   fetch(`/metrics/${deviceID}`).then(r => r.json()).then(snaps => {
     if (!snaps || snaps.length < 2) return;
     const el = document.getElementById(containerID);
     if (!el) return;
-    drawSparkline(el, snaps);
+    const w = el.clientWidth || 200, h = 40;
+    const max = Math.max(...snaps.flatMap(s => [s.bytes_sent||0, s.bytes_received||0]), 1);
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+    svg.style.width = '100%';
+    for (const [key, color] of [['bytes_sent','var(--primary)'],['bytes_received','var(--success)']]) {
+      const pts = snaps.map((s,i) => `${(i/(snaps.length-1))*w},${h-((s[key]||0)/max)*h}`).join(' ');
+      const line = document.createElementNS('http://www.w3.org/2000/svg','polyline');
+      line.setAttribute('points', pts);
+      line.setAttribute('fill','none');
+      line.setAttribute('stroke', color);
+      line.setAttribute('stroke-width','1.5');
+      svg.appendChild(line);
+    }
+    el.innerHTML = '';
+    el.appendChild(svg);
   }).catch(() => {});
-}
-
-function drawSparkline(el, snaps) {
-  const w = el.clientWidth || 200, h = 40;
-  const max = Math.max(...snaps.flatMap(s => [s.bytes_sent||0, s.bytes_received||0]), 1);
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
-  svg.style.width = '100%';
-  for (const [key, color] of [['bytes_sent','var(--primary)'],['bytes_received','var(--success)']]) {
-    const pts = snaps.map((s,i) => `${(i/(snaps.length-1))*w},${h-((s[key]||0)/max)*h}`).join(' ');
-    const line = document.createElementNS('http://www.w3.org/2000/svg','polyline');
-    line.setAttribute('points', pts);
-    line.setAttribute('fill','none');
-    line.setAttribute('stroke', color);
-    line.setAttribute('stroke-width','1.5');
-    svg.appendChild(line);
-  }
-  el.innerHTML = '';
-  el.appendChild(svg);
-}
+};
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
-function showToast(message, type = 'info') {
+window.showAdminToast = function(message, type = 'info') {
   const colors = {
     success: { bg: 'var(--success-light)', color: 'var(--success-text)' },
     warning: { bg: 'var(--warning-light)', color: 'var(--warning-text)' },
@@ -166,12 +148,24 @@ function showToast(message, type = 'info') {
   });
   document.body.appendChild(toast);
   setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 250); }, 3500);
-}
+};
+
+function showToast(msg, type) { window.showAdminToast(msg, type); }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   connectWS();
   document.querySelectorAll('.metrics-chart').forEach(el => {
-    if (el.dataset.deviceId) renderMetricsChart(el.dataset.deviceId, el.id);
+    if (el.dataset.deviceId) window.renderMetricsChart(el.dataset.deviceId, el.id);
   });
 });
+
+// Reconnect WS after HTMX swaps (if somehow lost) and re-init charts
+document.body.addEventListener('htmx:afterSwap', () => {
+  connectWS();
+  document.querySelectorAll('.metrics-chart').forEach(el => {
+    if (el.dataset.deviceId) window.renderMetricsChart(el.dataset.deviceId, el.id);
+  });
+});
+
+})(); // end IIFE
