@@ -26,21 +26,22 @@ func Open(path string) (*DB, error) {
 	// _busy_timeout=15000: wait up to 15s for locks before returning SQLITE_BUSY.
 	// _synchronous=NORMAL: safe with WAL, faster than FULL.
 	// _txlock=immediate: grab write lock immediately on BEGIN to avoid deadlocks.
-	dsn := fmt.Sprintf(
-		"file:%s?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=15000&_synchronous=NORMAL&_txlock=immediate",
+	// Single write connection serialises all writes — SQLite only allows one writer
+	// at a time anyway, so extra connections just cause SQLITE_BUSY fights.
+	// WAL journal mode allows concurrent readers on separate connections.
+	writeDSN := fmt.Sprintf(
+		"file:%s?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL",
 		path,
 	)
 
-	sqlDB, err := sql.Open("sqlite", dsn)
+	sqlDB, err := sql.Open("sqlite", writeDSN)
 	if err != nil {
 		return nil, fmt.Errorf("opening sqlite: %w", err)
 	}
 
-	// WAL mode supports multiple concurrent readers.
-	// Allow up to 4 open connections: typically 1 writer + a few readers.
-	// The busy_timeout handles the case where a writer is already active.
-	sqlDB.SetMaxOpenConns(4)
-	sqlDB.SetMaxIdleConns(4)
+	// One connection = one writer at a time. No lock contention.
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
 
 	if err := sqlDB.Ping(); err != nil {
 		return nil, fmt.Errorf("pinging sqlite: %w", err)
