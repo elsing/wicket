@@ -25,8 +25,7 @@ type Group struct {
 
 	// Populated by joins, not stored in this table.
 	Routes          []Route `db:"-"`
-	RoutingMode      string  `db:"routing_mode"`
-	EndpointOverride string  `db:"endpoint_override"`
+	EndpointOverride string  `db:"endpoint_override"` // optional: override endpoint in client configs
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -178,7 +177,7 @@ type Agent struct {
 	ID          string       `db:"id"`
 	Name        string       `db:"name"`
 	Description string       `db:"description"`
-	TokenHash   string       `db:"token_hash"`
+	TokenHash   string       `db:"token"`
 	VPNPool     string       `db:"vpn_pool"`     // CIDR e.g. "10.1.0.0/24"
 	WGPublicKey string       `db:"wg_public_key"` // agent's WireGuard public key
 	Endpoint    string       `db:"endpoint"`     // host:port for client configs

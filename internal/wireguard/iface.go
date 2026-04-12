@@ -118,28 +118,6 @@ func ensureIPTables(iface string, _ string, log *zap.Logger) {
 	log.Info("WireGuard forwarding rules in place", zap.String("iface", iface))
 }
 
-// EnsureMasquerade adds a MASQUERADE rule for the given subnet on the given interface.
-// Called when a group with routing_mode="masqueraded" has an active peer on this agent.
-// Safe to call multiple times — only adds the rule if it doesn't already exist.
-func EnsureMasquerade(iface, vpnPool string, log *zap.Logger) {
-	check := []string{"iptables", "-t", "nat", "-C", "POSTROUTING", "-s", vpnPool, "!", "-o", iface, "-j", "MASQUERADE"}
-	add := []string{"iptables", "-t", "nat", "-A", "POSTROUTING", "-s", vpnPool, "!", "-o", iface, "-j", "MASQUERADE"}
-	if run(check...) != nil {
-		if err := run(add...); err != nil {
-			log.Warn("adding MASQUERADE rule", zap.String("pool", vpnPool), zap.Error(err))
-		} else {
-			log.Info("masquerade rule added", zap.String("pool", vpnPool), zap.String("iface", iface))
-		}
-	}
-}
-
-// RemoveMasquerade removes the MASQUERADE rule for a subnet (e.g. when routing mode changes).
-func RemoveMasquerade(iface, vpnPool string, log *zap.Logger) {
-	del := []string{"iptables", "-t", "nat", "-D", "POSTROUTING", "-s", vpnPool, "!", "-o", iface, "-j", "MASQUERADE"}
-	if err := run(del...); err != nil {
-		log.Debug("removing MASQUERADE rule (may not exist)", zap.String("pool", vpnPool), zap.Error(err))
-	}
-}
 
 func run(args ...string) error {
 	cmd := exec.Command(args[0], args[1:]...)

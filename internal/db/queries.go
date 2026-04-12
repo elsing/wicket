@@ -211,7 +211,7 @@ func scanGroups(rows *sql.Rows) ([]*Group, error) {
 		if err := rows.Scan(
 			&g.ID, &g.Name, &g.Description, &sessionSecs,
 			&g.MaxExtensions, &g.IsPublic,
-			&g.RoutingMode, &g.EndpointOverride,
+			&g.EndpointOverride,
 			&g.CreatedAt, &g.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -637,7 +637,7 @@ func scanSession(row *sql.Row) (*Session, error) {
 
 func (d *DB) ListAgents(ctx context.Context) ([]*Agent, error) {
 	rows, err := d.sql.QueryContext(ctx,
-		`SELECT id, name, description, token_hash, vpn_pool, endpoint, wg_public_key,
+		`SELECT id, name, description, token, vpn_pool, endpoint, wg_public_key,
 		        is_active, last_seen_at, created_at
 		 FROM agents ORDER BY name`)
 	if err != nil {
@@ -663,7 +663,7 @@ func (d *DB) CreateAgent(ctx context.Context, name, description, tokenHash strin
 	id := newID()
 	now := time.Now().UTC()
 	_, err := d.sql.ExecContext(ctx,
-		`INSERT INTO agents (id, name, description, token_hash, vpn_pool, endpoint, is_active, created_at)
+		`INSERT INTO agents (id, name, description, token, vpn_pool, endpoint, is_active, created_at)
 		 VALUES (?, ?, ?, ?, '', '', 1, ?)`,
 		id, name, description, tokenHash, now,
 	)
@@ -681,7 +681,7 @@ func (d *DB) TouchAgentSeen(ctx context.Context, id string) error {
 
 func (d *DB) GetActiveAgents(ctx context.Context) ([]*Agent, error) {
 	rows, err := d.sql.QueryContext(ctx,
-		`SELECT id, name, description, token_hash, vpn_pool, endpoint, wg_public_key,
+		`SELECT id, name, description, token, vpn_pool, endpoint, wg_public_key,
 		        is_active, last_seen_at, created_at
 		 FROM agents WHERE is_active = 1`)
 	if err != nil {

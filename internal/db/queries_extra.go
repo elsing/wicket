@@ -224,19 +224,16 @@ func (d *DB) DeviceCountPerGroup(ctx context.Context) (map[string]int, error) {
 
 // UpdateGroup updates a group's name, description, session duration, max extensions,
 // routing mode and endpoint override.
-func (d *DB) UpdateGroup(ctx context.Context, id, name, description string, sessionDuration time.Duration, maxExtensions *int64, routingMode, endpointOverride string) error {
+func (d *DB) UpdateGroup(ctx context.Context, id, name, description string, sessionDuration time.Duration, maxExtensions *int64, endpointOverride string) error {
 	var maxExt interface{}
 	if maxExtensions != nil {
 		maxExt = *maxExtensions
 	}
-	if routingMode == "" {
-		routingMode = "routed"
-	}
 	_, err := d.sql.ExecContext(ctx, `
 		UPDATE groups SET name = ?, description = ?, session_duration = ?, max_extensions = ?,
-		                  routing_mode = ?, endpoint_override = ?
+		                  endpoint_override = ?
 		WHERE id = ?
-	`, name, description, int64(sessionDuration.Seconds()), maxExt, routingMode, endpointOverride, id)
+	`, name, description, int64(sessionDuration.Seconds()), maxExt, endpointOverride, id)
 	return err
 }
 
@@ -259,7 +256,7 @@ func (d *DB) RemoveAgentFromGroup(ctx context.Context, groupID, agentID string) 
 // GetGroupAgents returns all agents assigned to a group.
 func (d *DB) GetGroupAgents(ctx context.Context, groupID string) ([]*Agent, error) {
 	rows, err := d.sql.QueryContext(ctx, `
-		SELECT a.id, a.name, a.description, a.token_hash, a.vpn_pool, a.endpoint,
+		SELECT a.id, a.name, a.description, a.token, a.vpn_pool, a.endpoint,
 		       a.is_active, a.last_seen_at, a.created_at
 		FROM agents a
 		INNER JOIN group_agents ga ON ga.agent_id = a.id
@@ -310,7 +307,7 @@ func (d *DB) UpdateAgentDetails(ctx context.Context, id, name, description, vpnP
 // GetAgentByID returns a single agent by ID.
 func (d *DB) GetAgentByID(ctx context.Context, id string) (*Agent, error) {
 	row := d.sql.QueryRowContext(ctx, `
-		SELECT id, name, description, token_hash, vpn_pool, endpoint,
+		SELECT id, name, description, token, vpn_pool, endpoint,
 		       is_active, last_seen_at, created_at
 		FROM agents WHERE id = ?`, id)
 	var a Agent

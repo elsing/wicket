@@ -662,11 +662,6 @@ templ GroupCard(g *db.Group, routes []*db.Route, groupRoutes map[string][]string
 					} else {
 						<span>↻ unlimited ext</span>
 					}
-					if g.RoutingMode == "masqueraded" {
-						<span class="badge badge-warning" style="font-size:11px">NAT</span>
-					} else {
-						<span class="badge badge-muted" style="font-size:11px">Routed</span>
-					}
 				</div>
 				if len(groupData.GroupAgents[g.ID]) > 0 {
 					<div style="font-size:12px;color:var(--text-2);margin-top:4px">

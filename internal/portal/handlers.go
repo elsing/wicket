@@ -110,6 +110,12 @@ func NewHandler(
 // Health
 // ─────────────────────────────────────────────────────────────────────────────
 
+// serverError logs an internal error and returns a 500 to the client.
+func (h *Handler) serverError(w http.ResponseWriter, msg string, err error) {
+	h.log.Error("portal: "+msg, zap.Error(err))
+	http.Error(w, msg, http.StatusInternalServerError)
+}
+
 func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
 	status := h.svc.Health(time.Time{})
 	w.Header().Set("Content-Type", "application/json")
@@ -258,7 +264,7 @@ func (h *Handler) handleNewDevice(w http.ResponseWriter, r *http.Request) {
 
 	groups, err := h.svc.ListGroupsForUser(r.Context(), session.UserID)
 	if err != nil {
-		http.Error(w, "error loading groups", http.StatusInternalServerError)
+		h.serverError(w, "error loading groups", err)
 		return
 	}
 
@@ -314,7 +320,7 @@ func (h *Handler) handleSetAutoRenew(w http.ResponseWriter, r *http.Request) {
 	// Return updated device card for HTMX swap.
 	devices, err := h.svc.GetDevicesForUser(r.Context(), session.UserID)
 	if err != nil {
-		http.Error(w, "error loading device", http.StatusInternalServerError)
+		h.serverError(w, "error loading device", err)
 		return
 	}
 	for _, d := range devices {
@@ -391,7 +397,7 @@ func (h *Handler) handleActivateSession(w http.ResponseWriter, r *http.Request) 
 
 	devices, err := h.svc.GetDevicesForUser(r.Context(), session.UserID)
 	if err != nil {
-		http.Error(w, "error loading device", http.StatusInternalServerError)
+		h.serverError(w, "error loading device", err)
 		return
 	}
 	for _, d := range devices {

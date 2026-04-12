@@ -53,22 +53,6 @@ func New(cfg *config.Config, log *zap.Logger) (*Server, error) {
 
 	// Apply masquerade rules for any masqueraded groups that have VPN pools.
 	// This ensures rules survive container restarts.
-	if database != nil {
-		if groups, err := database.ListGroups(context.Background()); err == nil {
-			for _, g := range groups {
-				if g.RoutingMode == "masqueraded" {
-					if agents, err := database.GetGroupAgents(context.Background(), g.ID); err == nil {
-						for _, a := range agents {
-							if a.VPNPool != "" {
-								wireguard.EnsureMasquerade(cfg.WireGuard.Interface, a.VPNPool, log)
-								break
-							}
-						}
-					}
-				}
-			}
-		}
-	}
 
 	pm, err := wireguard.NewLocalPeerManager(cfg.WireGuard.Interface)
 	if err != nil {

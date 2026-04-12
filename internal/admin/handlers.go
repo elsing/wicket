@@ -17,10 +17,10 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/wicket-vpn/wicket/internal/config"
-	"github.com/wicket-vpn/wicket/internal/db"
 	agenthub "github.com/wicket-vpn/wicket/internal/agent"
+	"github.com/wicket-vpn/wicket/internal/config"
 	"github.com/wicket-vpn/wicket/internal/core"
+	"github.com/wicket-vpn/wicket/internal/db"
 	"github.com/wicket-vpn/wicket/internal/oidc"
 	"github.com/wicket-vpn/wicket/internal/portal"
 	"github.com/wicket-vpn/wicket/internal/ws"
@@ -40,6 +40,13 @@ type Handler struct {
 	agentHub *agenthub.Hub
 	cfg      *config.Config
 	log      *zap.Logger
+}
+
+// serverError logs an internal error and returns a 500 to the client.
+// All 500s should go through here so they appear in logs.
+func (h *Handler) serverError(w http.ResponseWriter, msg string, err error) {
+	h.log.Error("admin: "+msg, zap.Error(err))
+	http.Error(w, msg+": "+err.Error(), http.StatusInternalServerError)
 }
 
 // NewHandler creates the admin portal handler and wires all routes.
@@ -237,7 +244,6 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
-
 func (h *Handler) handleLocalLogin(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		renderAdminLoginPage(w, r, "Invalid request")
@@ -360,7 +366,7 @@ func (h *Handler) handleDisableDevice(w http.ResponseWriter, r *http.Request) {
 	sess := portal.SessionFromContext(r.Context())
 	deviceID := chi.URLParam(r, "deviceID")
 	if err := h.svc.DisableDevice(r.Context(), deviceID, sess.UserID, clientIP(r)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.serverError(w, "internal error", err)
 		return
 	}
 	h.renderDeviceRow(w, r, deviceID)
@@ -370,7 +376,7 @@ func (h *Handler) handleEnableDevice(w http.ResponseWriter, r *http.Request) {
 	sess := portal.SessionFromContext(r.Context())
 	deviceID := chi.URLParam(r, "deviceID")
 	if err := h.svc.DB().SetDeviceActive(r.Context(), deviceID, true); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.serverError(w, "internal error", err)
 		return
 	}
 	h.svc.WriteAuditLog(r.Context(), deviceID, sess.UserID, "device.enabled", clientIP(r))
@@ -467,13 +473,13 @@ func (h *Handler) handleToggleAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.svc.DB().SetUserAdmin(r.Context(), userID, !user.IsAdmin); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.serverError(w, "internal error", err)
 		return
 	}
 	// Return just the updated row
 	updated, err := h.svc.DB().GetUserByID(r.Context(), userID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.serverError(w, "internal error", err)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -487,7 +493,7 @@ func (h *Handler) handleAssignGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.svc.DB().AddUserToGroup(r.Context(), userID, r.FormValue("group_id")); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.serverError(w, "internal error", err)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
@@ -501,7 +507,7 @@ func (h *Handler) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		r.FormValue("vpn_pool"),
 		r.FormValue("endpoint"),
 	); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.serverError(w, "internal error", err)
 		return
 	}
 	// Return updated agent card
@@ -515,7 +521,7 @@ func (h *Handler) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleAssignGroupAgent(w http.ResponseWriter, r *http.Request) {
 	groupID := chi.URLParam(r, "groupID")
 	if err := h.svc.DB().AssignAgentToGroup(r.Context(), groupID, r.FormValue("agent_id")); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.serverError(w, "internal error", err)
 		return
 	}
 	h.handleGroups(w, r)
@@ -525,7 +531,7 @@ func (h *Handler) handleRemoveGroupAgent(w http.ResponseWriter, r *http.Request)
 	groupID := chi.URLParam(r, "groupID")
 	agentID := chi.URLParam(r, "agentID")
 	if err := h.svc.DB().RemoveAgentFromGroup(r.Context(), groupID, agentID); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.serverError(w, "internal error", err)
 		return
 	}
 	h.handleGroups(w, r)
@@ -555,12 +561,8 @@ func (h *Handler) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 			maxExt = &n
 		}
 	}
-	routingMode := r.FormValue("routing_mode")
-	if routingMode != "masqueraded" {
-		routingMode = "routed"
-	}
-	if err := h.svc.DB().UpdateGroup(r.Context(), groupID, name, r.FormValue("description"), d, maxExt, routingMode, r.FormValue("endpoint_override")); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if err := h.svc.DB().UpdateGroup(r.Context(), groupID, name, r.FormValue("description"), d, maxExt, r.FormValue("endpoint_override")); err != nil {
+		h.serverError(w, "internal error", err)
 		return
 	}
 	h.handleGroups(w, r)
@@ -575,8 +577,8 @@ func (h *Handler) handleGroups(w http.ResponseWriter, r *http.Request) {
 	renderAdminGroups(w, r, AdminGroupsData{
 		Session:      sess,
 		Groups:       groups,
-		Routes:      subnets,
-		GroupRoutes: groupRoutes,
+		Routes:       subnets,
+		GroupRoutes:  groupRoutes,
 		DeviceCounts: deviceCounts,
 	})
 }
@@ -609,7 +611,7 @@ func (h *Handler) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if _, err := h.svc.DB().CreateGroup(r.Context(), name, r.FormValue("description"), d, maxExt, r.FormValue("is_public") == "true"); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.serverError(w, "internal error", err)
 		return
 	}
 	h.handleGroups(w, r)
@@ -622,7 +624,7 @@ func (h *Handler) handleAssignGroupRoute(w http.ResponseWriter, r *http.Request)
 	}
 	groupID := chi.URLParam(r, "groupID")
 	if err := h.svc.DB().AddRouteToGroup(r.Context(), groupID, r.FormValue("route_id")); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.serverError(w, "internal error", err)
 		return
 	}
 	h.renderGroupCard(w, r, groupID)
@@ -631,7 +633,7 @@ func (h *Handler) handleAssignGroupRoute(w http.ResponseWriter, r *http.Request)
 func (h *Handler) handleRemoveGroupRoute(w http.ResponseWriter, r *http.Request) {
 	groupID := chi.URLParam(r, "groupID")
 	if err := h.svc.DB().RemoveRouteFromGroup(r.Context(), groupID, chi.URLParam(r, "routeID")); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.serverError(w, "internal error", err)
 		return
 	}
 	h.renderGroupCard(w, r, groupID)
@@ -654,7 +656,7 @@ func (h *Handler) handleCreateRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := h.svc.DB().CreateRoute(r.Context(), name, cidr, r.FormValue("description")); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.serverError(w, "internal error", err)
 		return
 	}
 	h.handleRoutes(w, r)
@@ -662,7 +664,7 @@ func (h *Handler) handleCreateRoute(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleDeleteRoute(w http.ResponseWriter, r *http.Request) {
 	if err := h.svc.DB().DeleteRoute(r.Context(), chi.URLParam(r, "routeID")); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.serverError(w, "internal error", err)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
@@ -705,7 +707,7 @@ func (h *Handler) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	agent, err := h.svc.DB().CreateAgent(r.Context(), name, r.FormValue("description"), hash)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.serverError(w, "internal error", err)
 		return
 	}
 	renderAgentToken(w, r, agent, token)
@@ -737,8 +739,8 @@ func (h *Handler) handleAgentConnect(w http.ResponseWriter, r *http.Request) {
 		r.Context(),
 		h.svc.DB(),
 		agentRecord.ID,
-		agentRecord.VPNPool,  // used as WG interface name hint
-		"",                   // private key managed by agent itself
+		agentRecord.VPNPool, // used as WG interface name hint
+		"",                  // private key managed by agent itself
 		h.svc.Config().WireGuard.ListenPort,
 	)
 	if err != nil {
@@ -751,7 +753,7 @@ func (h *Handler) handleAgentConnect(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleRevokeAgent(w http.ResponseWriter, r *http.Request) {
 	if err := h.svc.DB().DeactivateAgent(r.Context(), chi.URLParam(r, "agentID")); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.serverError(w, "internal error", err)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
@@ -790,7 +792,7 @@ func (h *Handler) handleDeviceMetrics(w http.ResponseWriter, r *http.Request) {
 	since := time.Now().Add(-7 * 24 * time.Hour)
 	snaps, err := h.svc.DB().ListMetricSnapshotsForDevice(r.Context(), deviceID, since)
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		h.serverError(w, "loading metric snapshots", err)
 		return
 	}
 
@@ -806,12 +808,18 @@ func (h *Handler) handleDeviceMetrics(w http.ResponseWriter, r *http.Request) {
 	for i := 1; i < len(snaps); i++ {
 		prev, cur := snaps[i-1], snaps[i]
 		dt := cur.RecordedAt.Sub(prev.RecordedAt).Seconds()
-		if dt <= 0 { dt = 30 }
+		if dt <= 0 {
+			dt = 30
+		}
 		// Rate in bytes/sec. Guard against counter resets (negative deltas).
 		sent := float64(cur.BytesSent-prev.BytesSent) / dt
 		recv := float64(cur.BytesReceived-prev.BytesReceived) / dt
-		if sent < 0 { sent = 0 }
-		if recv < 0 { recv = 0 }
+		if sent < 0 {
+			sent = 0
+		}
+		if recv < 0 {
+			recv = 0
+		}
 		points = append(points, point{
 			Time:          cur.RecordedAt.Format("15:04"),
 			BytesSent:     sent,
@@ -848,7 +856,7 @@ func (h *Handler) renderGroupCard(w http.ResponseWriter, r *http.Request, groupI
 	subnets, _ := h.svc.ListAllRoutes(r.Context())
 	groupRoutes, _ := h.svc.DB().ListGroupRoutes(r.Context())
 	renderGroupCard(w, r, AdminGroupsData{
-		Groups:       groups,
+		Groups:      groups,
 		Routes:      subnets,
 		GroupRoutes: groupRoutes,
 	}, groupID)

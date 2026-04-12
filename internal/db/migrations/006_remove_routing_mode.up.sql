@@ -1,0 +1,7 @@
+-- Migration 006: Remove routing_mode from groups.
+-- SQLite does not support DROP COLUMN without recreating the table.
+-- The column is left in the database but is no longer read or written by the application.
+-- It will be cleaned up in a future migration if needed.
+--
+-- The endpoint_override column is retained — it allows overriding the agent endpoint
+-- in client configs, useful for direct-to-agent setups or future gateway support.
