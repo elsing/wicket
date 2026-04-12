@@ -24,7 +24,7 @@ type Group struct {
 	UpdatedAt       time.Time     `db:"updated_at"`
 
 	// Populated by joins, not stored in this table.
-	Routes          []Route `db:"-"`
+	Routes           []Route `db:"-"`
 	EndpointOverride string  `db:"endpoint_override"` // optional: override endpoint in client configs
 }
 
@@ -47,7 +47,7 @@ type Route struct {
 type GroupRoute struct {
 	ID        string    `db:"id"`
 	GroupID   string    `db:"group_id"`
-	RouteID  string    `db:"route_id"`
+	RouteID   string    `db:"route_id"`
 	CreatedAt time.Time `db:"created_at"`
 }
 
@@ -57,7 +57,7 @@ type GroupRoute struct {
 type DeviceRoute struct {
 	ID        string    `db:"id"`
 	DeviceID  string    `db:"device_id"`
-	RouteID  string    `db:"route_id"`
+	RouteID   string    `db:"route_id"`
 	CreatedAt time.Time `db:"created_at"`
 }
 
@@ -68,14 +68,14 @@ type DeviceRoute struct {
 // User represents a person who has logged in via OIDC.
 // Created automatically on first login.
 type User struct {
-	ID          string    `db:"id"`
-	OIDCSub     string    `db:"oidc_sub"`     // stable OIDC subject — primary identifier
-	Email       string    `db:"email"`
-	DisplayName string    `db:"display_name"`
-	IsAdmin     bool      `db:"is_admin"`
-	IsActive    bool      `db:"is_active"`
-	CreatedAt   time.Time `db:"created_at"`
-	UpdatedAt   time.Time `db:"updated_at"`
+	ID          string       `db:"id"`
+	OIDCSub     string       `db:"oidc_sub"` // stable OIDC subject — primary identifier
+	Email       string       `db:"email"`
+	DisplayName string       `db:"display_name"`
+	IsAdmin     bool         `db:"is_admin"`
+	IsActive    bool         `db:"is_active"`
+	CreatedAt   time.Time    `db:"created_at"`
+	UpdatedAt   time.Time    `db:"updated_at"`
 	LastLoginAt sql.NullTime `db:"last_login_at"`
 
 	// Populated by joins.
@@ -107,8 +107,8 @@ type Device struct {
 	PublicKey        string       `db:"public_key"`
 	AssignedIP       string       `db:"assigned_ip"`
 	IsApproved       bool         `db:"is_approved"`
-	IsActive         bool         `db:"is_active"`        // admin-level toggle
-	AutoRenew        bool         `db:"auto_renew"`       // activate session on portal login
+	IsActive         bool         `db:"is_active"`         // admin-level toggle
+	AutoRenew        bool         `db:"auto_renew"`        // activate session on portal login
 	ConfigDownloaded bool         `db:"config_downloaded"` // one-time download guard
 	CreatedAt        time.Time    `db:"created_at"`
 	UpdatedAt        time.Time    `db:"updated_at"`
@@ -117,7 +117,7 @@ type Device struct {
 	// Populated by joins.
 	Group         *Group   `db:"-"`
 	User          *User    `db:"-"`
-	Routes       []Route  `db:"-"` // device overrides if set, else group routes
+	Routes        []Route  `db:"-"` // device overrides if set, else group routes
 	ActiveSession *Session `db:"-"`
 }
 
@@ -178,9 +178,9 @@ type Agent struct {
 	Name        string       `db:"name"`
 	Description string       `db:"description"`
 	TokenHash   string       `db:"token"`
-	VPNPool     string       `db:"vpn_pool"`     // CIDR e.g. "10.1.0.0/24"
+	VPNPool     string       `db:"vpn_pool"`      // CIDR e.g. "10.1.0.0/24"
 	WGPublicKey string       `db:"wg_public_key"` // agent's WireGuard public key
-	Endpoint    string       `db:"endpoint"`     // host:port for client configs
+	Endpoint    string       `db:"endpoint"`      // host:port for client configs
 	IsActive    bool         `db:"is_active"`
 	LastSeenAt  sql.NullTime `db:"last_seen_at"`
 	CreatedAt   time.Time    `db:"created_at"`
@@ -216,7 +216,7 @@ type AuditLog struct {
 	DeviceID   sql.NullString `db:"device_id"`
 	AgentID    sql.NullString `db:"agent_id"`
 	Event      string         `db:"event"`
-	Metadata   string         `db:"metadata"`   // JSON blob
+	Metadata   string         `db:"metadata"` // JSON blob
 	IPAddress  string         `db:"ip_address"`
 	CreatedAt  time.Time      `db:"created_at"`
 	UserEmail  string         `db:"-"` // populated by join queries
@@ -225,8 +225,8 @@ type AuditLog struct {
 
 // Audit event constants. Format: "entity.action"
 const (
-	AuditEventUserLogin    = "user.login"
-	AuditEventUserCreated  = "user.created"
+	AuditEventUserLogin   = "user.login"
+	AuditEventUserCreated = "user.created"
 
 	AuditEventDeviceCreated  = "device.created"
 	AuditEventDeviceApproved = "device.approved"
@@ -244,7 +244,22 @@ const (
 
 	AuditEventAgentConnected    = "agent.connected"
 	AuditEventAgentDisconnected = "agent.disconnected"
-	AuditEventAgentPurged       = "agent.purged" // dead man's switch triggered
+	AuditEventAgentCreated      = "agent.created"
+	AuditEventAgentRevoked      = "agent.revoked"
+	AuditEventAgentDeleted      = "agent.deleted"
+	AuditEventAgentUpdated      = "agent.updated"
+
+	AuditEventGroupCreated = "group.created"
+	AuditEventGroupUpdated = "group.updated"
+	AuditEventGroupDeleted = "group.deleted"
+
+	AuditEventRouteCreated = "route.created"
+	AuditEventRouteDeleted = "route.deleted"
+
+	AuditEventGroupRouteAdded   = "group.route.added"
+	AuditEventGroupRouteRemoved = "group.route.removed"
+	AuditEventGroupAgentAdded   = "group.agent.added"
+	AuditEventGroupAgentRemoved = "group.agent.removed"
 )
 
 // LocalAdmin is a local username/password account for emergency admin access.

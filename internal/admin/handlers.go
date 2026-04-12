@@ -536,6 +536,8 @@ func (h *Handler) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 	if h.agentHub != nil {
 		a.Connected = h.agentHub.IsConnected(agentID)
 	}
+	sessAU := portal.SessionFromContext(r.Context())
+	h.svc.WriteAdminAuditLog(r.Context(), sessAU.UserID, db.AuditEventAgentUpdated, clientIP(r), agentID)
 	data := h.agentsData(r)
 	renderAgentCard(w, r, a, data)
 }
@@ -546,6 +548,8 @@ func (h *Handler) handleAssignGroupAgent(w http.ResponseWriter, r *http.Request)
 		h.serverError(w, "assigning agent to group", err)
 		return
 	}
+	sessU := portal.SessionFromContext(r.Context())
+	h.svc.WriteAdminAuditLog(r.Context(), sessU.UserID, db.AuditEventGroupUpdated, clientIP(r), groupID)
 	renderGroupCard(w, r, h.groupsData(r), groupID)
 }
 
@@ -556,6 +560,8 @@ func (h *Handler) handleRemoveGroupAgent(w http.ResponseWriter, r *http.Request)
 		h.serverError(w, "removing agent from group", err)
 		return
 	}
+	sessU := portal.SessionFromContext(r.Context())
+	h.svc.WriteAdminAuditLog(r.Context(), sessU.UserID, db.AuditEventGroupUpdated, clientIP(r), groupID)
 	renderGroupCard(w, r, h.groupsData(r), groupID)
 }
 
@@ -591,6 +597,8 @@ func (h *Handler) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, "updating group", err)
 		return
 	}
+	sessU := portal.SessionFromContext(r.Context())
+	h.svc.WriteAdminAuditLog(r.Context(), sessU.UserID, db.AuditEventGroupUpdated, clientIP(r), groupID)
 	renderGroupCard(w, r, h.groupsData(r), groupID)
 }
 
@@ -676,6 +684,8 @@ func (h *Handler) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, "creating group", err)
 		return
 	}
+	sessG := portal.SessionFromContext(r.Context())
+	h.svc.WriteAdminAuditLog(r.Context(), sessG.UserID, db.AuditEventGroupCreated, clientIP(r), name)
 	h.handleGroups(w, r)
 }
 
@@ -721,6 +731,8 @@ func (h *Handler) handleCreateRoute(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, "internal error", err)
 		return
 	}
+	sessR := portal.SessionFromContext(r.Context())
+	h.svc.WriteAdminAuditLog(r.Context(), sessR.UserID, db.AuditEventRouteCreated, clientIP(r), r.FormValue("name"))
 	h.handleRoutes(w, r)
 }
 
@@ -802,6 +814,8 @@ func (h *Handler) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, "creating agent", err)
 		return
 	}
+	sessA := portal.SessionFromContext(r.Context())
+	h.svc.WriteAdminAuditLog(r.Context(), sessA.UserID, db.AuditEventAgentCreated, clientIP(r), name)
 	w.Header().Set("HX-Trigger", `{"refreshAgentsList": true}`)
 	renderAgentToken(w, r, agent, token)
 }
@@ -845,12 +859,13 @@ func (h *Handler) handleAgentConnect(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleDeleteAgent(w http.ResponseWriter, r *http.Request) {
+	sessDA := portal.SessionFromContext(r.Context())
 	agentID := chi.URLParam(r, "agentID")
 	if err := h.svc.DB().DeleteAgent(r.Context(), agentID); err != nil {
 		h.serverError(w, "deleting agent", err)
 		return
 	}
-	// Return empty - the card will be deleted by hx-swap="delete"
+	h.svc.WriteAdminAuditLog(r.Context(), sessDA.UserID, db.AuditEventAgentDeleted, clientIP(r), agentID)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -866,6 +881,8 @@ func (h *Handler) handleRevokeAgent(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, "fetching agent after revoke", err)
 		return
 	}
+	sessRV := portal.SessionFromContext(r.Context())
+	h.svc.WriteAdminAuditLog(r.Context(), sessRV.UserID, db.AuditEventAgentRevoked, clientIP(r), agentID)
 	renderAgentCard(w, r, a, h.agentsData(r))
 }
 
@@ -988,6 +1005,8 @@ func (h *Handler) handleDeleteGroup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	sessX := portal.SessionFromContext(r.Context())
+	h.svc.WriteAdminAuditLog(r.Context(), sessX.UserID, db.AuditEventGroupDeleted, clientIP(r), groupID)
 	w.WriteHeader(http.StatusOK)
 }
 

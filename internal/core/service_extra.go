@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
@@ -20,6 +21,18 @@ func (s *Service) DB() *db.DB {
 }
 
 // WriteAuditLog is a convenience wrapper for admin handlers.
+// WriteAdminAuditLog logs an admin action with optional metadata.
+func (s *Service) WriteAdminAuditLog(ctx context.Context, actorID, event, ip, metadata string) {
+	if err := s.db.WriteAuditLog(ctx, &db.AuditLog{
+		UserID:    sql.NullString{String: actorID, Valid: actorID != ""},
+		Event:     event,
+		IPAddress: ip,
+		Metadata:  metadata,
+	}); err != nil {
+		s.log.Warn("writing admin audit log", zap.Error(err))
+	}
+}
+
 func (s *Service) WriteAuditLog(ctx context.Context, deviceID, userID, event, ip string) {
 	if err := s.db.WriteAuditLog(ctx, &db.AuditLog{
 		UserID:    sql.NullString{String: userID, Valid: userID != ""},

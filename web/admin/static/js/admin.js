@@ -4,11 +4,11 @@ document.addEventListener('DOMContentLoaded', function() {
   modal.id = 'confirm-modal';
   modal.style.cssText = 'display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.45);align-items:center;justify-content:center';
   modal.innerHTML = `
-    <div style="background:var(--bg-1,#fff);border-radius:10px;padding:24px 28px;max-width:400px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,.18)">
-      <p id="confirm-modal-msg" style="margin:0 0 20px;font-size:15px;color:var(--text-1)"></p>
+    <div style="background:var(--bg-card,#fff);border-radius:10px;padding:24px 28px;max-width:400px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,.3);border:1px solid var(--border,#e5e7eb)">
+      <p id="confirm-modal-msg" style="margin:0 0 20px;font-size:15px;color:var(--text,#111)"></p>
       <div style="display:flex;gap:10px;justify-content:flex-end">
         <button id="confirm-modal-cancel" class="btn btn-ghost">Cancel</button>
-        <button id="confirm-modal-ok" class="btn" style="background:var(--error-bg,#fee2e2);color:var(--error-text,#b91c1c);border:1px solid var(--error-text,#b91c1c)">Confirm</button>
+        <button id="confirm-modal-ok" class="btn" style="background:var(--error-light,#fee2e2);color:var(--error-text,#b91c1c);border:1px solid var(--error-text,#b91c1c)">Confirm</button>
       </div>
     </div>`;
   document.body.appendChild(modal);

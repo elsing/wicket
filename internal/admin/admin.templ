@@ -909,10 +909,12 @@ templ AgentsList(data AdminAgentsData) {
 		<div class="card form-panel">
 			<h3>Register Agent</h3>
 			<p class="form-hint" style="margin-bottom:14px">The token is shown once. Store it securely — it authenticates the agent to Wicket.</p>
+			<div id="agent-form-error" style="margin-bottom:8px"></div>
+			<div id="agent-token-result" style="margin-bottom:8px"></div>
 			<form hx-post="/agents"
 				hx-target="#agent-token-result"
 				hx-swap="innerHTML"
-				hx-on--after-request="if(event.detail.successful){ htmx.ajax('GET','/agents/list',{target:'#agents-content',swap:'innerHTML'}); this.reset(); }"
+				hx-on--after-request="if(event.detail.successful){ htmx.ajax('GET','/agents/list',{target:'#agents-content',swap:'innerHTML'}); this.reset(); document.getElementById('agent-form-error').innerHTML=''; }"
 				class="form">
 				<div class="form-field">
 					<label>Name</label>
