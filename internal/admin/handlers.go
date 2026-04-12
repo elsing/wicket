@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"strconv"
@@ -47,6 +48,22 @@ type Handler struct {
 func (h *Handler) serverError(w http.ResponseWriter, msg string, err error) {
 	h.log.Error("admin: "+msg, zap.Error(err))
 	http.Error(w, msg+": "+err.Error(), http.StatusInternalServerError)
+}
+
+// formError returns a user-visible inline error using HTMX response headers
+// to retarget the swap to the form's error div rather than the success target.
+// The form must have a sibling <div id="<formID>-error"> element.
+func formError(w http.ResponseWriter, errorDivID, msg string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("HX-Retarget", "#"+errorDivID)
+	w.Header().Set("HX-Reswap", "innerHTML")
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintf(w, `<p style="color:var(--error-text);font-size:13px;margin:8px 0">⚠ %s</p>`, msg)
+}
+
+// isUniqueViolation reports whether err is a SQLite unique constraint failure.
+func isUniqueViolation(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed")
 }
 
 // NewHandler creates the admin portal handler and wires all routes.
@@ -611,7 +628,11 @@ func (h *Handler) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if _, err := h.svc.DB().CreateGroup(r.Context(), name, r.FormValue("description"), d, maxExt, r.FormValue("is_public") == "true"); err != nil {
-		h.serverError(w, "internal error", err)
+		if isUniqueViolation(err) {
+			formError(w, "group-form-error", "A group named "+name+" already exists.")
+			return
+		}
+		h.serverError(w, "creating group", err)
 		return
 	}
 	h.handleGroups(w, r)
@@ -707,7 +728,11 @@ func (h *Handler) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	agent, err := h.svc.DB().CreateAgent(r.Context(), name, r.FormValue("description"), hash)
 	if err != nil {
-		h.serverError(w, "internal error", err)
+		if isUniqueViolation(err) {
+			formError(w, "agent-form-error", "An agent named "+name+" already exists.")
+			return
+		}
+		h.serverError(w, "creating agent", err)
 		return
 	}
 	renderAgentToken(w, r, agent, token)

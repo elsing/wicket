@@ -253,6 +253,7 @@ templ AdminRoutesPage(data AdminRoutesData) {
 			</div>
 			<div class="card form-panel">
 				<h3>Add Route</h3>
+				<div id="route-form-error"></div>
 				<form hx-post="/routes" hx-target="#route-list" hx-swap="innerHTML" class="form">
 					<div class="form-field">
 						<label>Name</label>
@@ -600,6 +601,7 @@ templ AdminGroupsPage(data AdminGroupsData) {
 			</div>
 			<div class="card form-panel">
 				<h3>Create Group</h3>
+				<div id="group-form-error"></div>
 				<form hx-post="/groups" hx-target="#groups-list" hx-swap="innerHTML" class="form">
 					<div class="form-field">
 						<label>Name</label>

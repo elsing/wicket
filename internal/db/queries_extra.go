@@ -256,7 +256,7 @@ func (d *DB) RemoveAgentFromGroup(ctx context.Context, groupID, agentID string) 
 // GetGroupAgents returns all agents assigned to a group.
 func (d *DB) GetGroupAgents(ctx context.Context, groupID string) ([]*Agent, error) {
 	rows, err := d.sql.QueryContext(ctx, `
-		SELECT a.id, a.name, a.description, a.token, a.vpn_pool, a.endpoint,
+		SELECT a.id, a.name, a.description, a.token, a.vpn_pool, a.endpoint, a.wg_public_key,
 		       a.is_active, a.last_seen_at, a.created_at
 		FROM agents a
 		INNER JOIN group_agents ga ON ga.agent_id = a.id
@@ -270,7 +270,7 @@ func (d *DB) GetGroupAgents(ctx context.Context, groupID string) ([]*Agent, erro
 	for rows.Next() {
 		var a Agent
 		if err := rows.Scan(&a.ID, &a.Name, &a.Description, &a.TokenHash,
-			&a.VPNPool, &a.Endpoint, &a.IsActive, &a.LastSeenAt, &a.CreatedAt); err != nil {
+			&a.VPNPool, &a.Endpoint, &a.WGPublicKey, &a.IsActive, &a.LastSeenAt, &a.CreatedAt); err != nil {
 			return nil, err
 		}
 		agents = append(agents, &a)
@@ -307,7 +307,7 @@ func (d *DB) UpdateAgentDetails(ctx context.Context, id, name, description, vpnP
 // GetAgentByID returns a single agent by ID.
 func (d *DB) GetAgentByID(ctx context.Context, id string) (*Agent, error) {
 	row := d.sql.QueryRowContext(ctx, `
-		SELECT id, name, description, token, vpn_pool, endpoint,
+		SELECT id, name, description, token, vpn_pool, endpoint, wg_public_key,
 		       is_active, last_seen_at, created_at
 		FROM agents WHERE id = ?`, id)
 	var a Agent
