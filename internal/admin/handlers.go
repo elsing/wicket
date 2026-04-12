@@ -596,12 +596,31 @@ func (h *Handler) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) groupsData(r *http.Request) AdminGroupsData {
 	sess := portal.SessionFromContext(r.Context())
-	groups, _ := h.svc.ListAllGroups(r.Context())
-	routes, _ := h.svc.ListAllRoutes(r.Context())
-	agents, _ := h.svc.DB().ListAgents(r.Context())
-	groupRoutes, _ := h.svc.DB().ListGroupRoutes(r.Context())
-	groupAgents, _ := h.svc.DB().GetGroupAgentMap(r.Context())
-	deviceCounts, _ := h.svc.DB().DeviceCountPerGroup(r.Context())
+	groups, err := h.svc.ListAllGroups(r.Context())
+	if err != nil {
+		h.log.Error("admin: listing groups", zap.Error(err))
+	}
+	routes, err := h.svc.ListAllRoutes(r.Context())
+	if err != nil {
+		h.log.Error("admin: listing routes", zap.Error(err))
+	}
+	agents, err := h.svc.DB().ListAgents(r.Context())
+	if err != nil {
+		h.log.Error("admin: listing agents", zap.Error(err))
+	}
+	groupRoutes, err := h.svc.DB().ListGroupRoutes(r.Context())
+	if err != nil {
+		h.log.Error("admin: listing group routes", zap.Error(err))
+	}
+	groupAgents, err := h.svc.DB().GetGroupAgentMap(r.Context())
+	if err != nil {
+		h.log.Error("admin: listing group agents", zap.Error(err))
+	}
+	deviceCounts, err := h.svc.DB().DeviceCountPerGroup(r.Context())
+	if err != nil {
+		h.log.Error("admin: counting devices", zap.Error(err))
+	}
+	_ = err
 	agentsByID := make(map[string]*db.Agent, len(agents))
 	for _, a := range agents {
 		agentsByID[a.ID] = a
@@ -733,7 +752,10 @@ func (h *Handler) handleAgentsList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) agentsData(r *http.Request) AdminAgentsData {
-	agents, _ := h.svc.DB().ListAgents(r.Context())
+	agents, err := h.svc.DB().ListAgents(r.Context())
+	if err != nil {
+		h.log.Error("admin: listing agents", zap.Error(err))
+	}
 	counts := h.hub.ConnectedCount()
 	if h.agentHub != nil {
 		connectedIDs := make(map[string]bool)
@@ -838,8 +860,13 @@ func (h *Handler) handleRevokeAgent(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, "revoking agent", err)
 		return
 	}
-	// Return updated agent card showing revoked state with delete button
-	h.handleAgents(w, r)
+	// Return the updated card (now showing revoked state + delete button)
+	a, err := h.svc.DB().GetAgentByID(r.Context(), agentID)
+	if err != nil {
+		h.serverError(w, "fetching agent after revoke", err)
+		return
+	}
+	renderAgentCard(w, r, a, h.agentsData(r))
 }
 
 func (h *Handler) handleAuditLog(w http.ResponseWriter, r *http.Request) {

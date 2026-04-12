@@ -824,15 +824,21 @@ templ AgentCard(a *db.Agent, data AdminAgentsData) {
 				<div style="display:flex;gap:8px;flex-shrink:0">
 					if a.IsActive {
 						<button class="btn btn-sm btn-outline"
-							data-agent-id={ a.ID }
-							data-toggle-agent-edit="true">
+							data-toggle-agent-edit={ a.ID }>
 							Edit
 						</button>
 						<button class="btn btn-sm btn-ghost" style="color:var(--error-text)"
 							hx-delete={ "/agents/" + a.ID }
-							hx-target={ "#agent-" + a.ID } hx-swap="delete"
+							hx-target={ "#agent-" + a.ID } hx-swap="outerHTML"
 							hx-confirm="Revoke this agent? This will disconnect any devices using it.">
 							Revoke
+						</button>
+					} else {
+						<button class="btn btn-sm btn-ghost" style="color:var(--error-text)"
+							hx-delete={ "/agents/" + a.ID + "/delete" }
+							hx-target={ "#agent-" + a.ID } hx-swap="delete"
+							hx-confirm="Permanently delete this agent?">
+							Delete
 						</button>
 					}
 				</div>
@@ -860,8 +866,7 @@ templ AgentCard(a *db.Agent, data AdminAgentsData) {
 					<div style="grid-column:1/-1;display:flex;gap:8px">
 						<button type="submit" class="btn btn-sm btn-primary">Save</button>
 						<button type="button" class="btn btn-sm btn-ghost"
-							data-agent-id={ a.ID }
-							data-toggle-agent-edit="cancel">Cancel</button>
+							data-toggle-agent-edit={ a.ID }>Cancel</button>
 					</div>
 				</form>
 			</div>
@@ -883,7 +888,11 @@ templ AgentsList(data AdminAgentsData) {
 		<div class="card form-panel">
 			<h3>Register Agent</h3>
 			<p class="form-hint" style="margin-bottom:14px">The token is shown once. Store it securely — it authenticates the agent to Wicket.</p>
-			<form hx-post="/agents" hx-target="#agent-token-result" hx-swap="innerHTML" class="form">
+			<form hx-post="/agents"
+				hx-target="#agent-token-result"
+				hx-swap="innerHTML"
+				hx-on--after-request="if(event.detail.successful){ htmx.ajax('GET','/agents/list',{target:'#agents-content',swap:'innerHTML'}); this.reset(); }"
+				class="form">
 				<div class="form-field">
 					<label>Name</label>
 					<input type="text" name="name" class="input" placeholder="agent-lon-01" required/>

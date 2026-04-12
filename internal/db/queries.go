@@ -137,7 +137,7 @@ func scanUsers(rows *sql.Rows) ([]*User, error) {
 func (d *DB) GetGroupByID(ctx context.Context, id string) (*Group, error) {
 	row := d.sql.QueryRowContext(ctx,
 		`SELECT id, name, description, session_duration, max_extensions, is_public,
-		        created_at, updated_at
+		        endpoint_override, created_at, updated_at
 		 FROM groups WHERE id = ?`, id)
 	return scanGroup(row)
 }
@@ -145,7 +145,7 @@ func (d *DB) GetGroupByID(ctx context.Context, id string) (*Group, error) {
 func (d *DB) ListGroups(ctx context.Context) ([]*Group, error) {
 	rows, err := d.sql.QueryContext(ctx,
 		`SELECT id, name, description, session_duration, max_extensions, is_public,
-		        created_at, updated_at
+		        endpoint_override, created_at, updated_at
 		 FROM groups ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -157,7 +157,8 @@ func (d *DB) ListGroups(ctx context.Context) ([]*Group, error) {
 func (d *DB) ListGroupsForUser(ctx context.Context, userID string) ([]*Group, error) {
 	rows, err := d.sql.QueryContext(ctx, `
 		SELECT DISTINCT g.id, g.name, g.description, g.session_duration,
-		                g.max_extensions, g.is_public, g.created_at, g.updated_at
+		                g.max_extensions, g.is_public, g.endpoint_override,
+		                g.created_at, g.updated_at
 		FROM groups g
 		LEFT JOIN user_groups ug ON ug.group_id = g.id AND ug.user_id = ?
 		WHERE g.is_public = 1 OR ug.user_id IS NOT NULL
@@ -194,6 +195,7 @@ func scanGroup(row *sql.Row) (*Group, error) {
 	err := row.Scan(
 		&g.ID, &g.Name, &g.Description, &sessionSecs,
 		&g.MaxExtensions, &g.IsPublic,
+		&g.EndpointOverride,
 		&g.CreatedAt, &g.UpdatedAt,
 	)
 	if err != nil {
