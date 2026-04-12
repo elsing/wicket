@@ -637,7 +637,7 @@ templ AdminGroupsPage(data AdminGroupsData) {
 // GroupCard renders a single group card for HTMX outerHTML swaps.
 templ GroupCard(g *db.Group, routes []*db.Route, groupRoutes map[string][]string, deviceCount int, groupData AdminGroupsData) {
 	<div class="card" id={ "group-" + g.ID } style="padding:20px 24px">
-		<div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:14px;gap:16px">
+		<div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px;gap:16px">
 			<div style="flex:1;min-width:0">
 				<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
 					<span style="font-weight:600;font-size:15px">{ g.Name }</span>
@@ -665,7 +665,7 @@ templ GroupCard(g *db.Group, routes []*db.Route, groupRoutes map[string][]string
 						<span>↻ unlimited ext</span>
 					}
 				</div>
-				<div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;margin-top:8px">Agent</div>
+				<div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;margin-top:12px">Agent</div>
 				if len(groupData.GroupAgents[g.ID]) > 0 {
 					for _, agentID := range groupData.GroupAgents[g.ID] {
 						if agent, ok := groupData.AgentsByID[agentID]; ok {
@@ -743,8 +743,8 @@ templ GroupCard(g *db.Group, routes []*db.Route, groupRoutes map[string][]string
 			</form>
 		</div>
 
-		<div>
-			<div style="font-size:12px;font-weight:500;color:var(--text-2);margin-bottom:8px">SUBNETS</div>
+		<div style="margin-top:14px">
+			<div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Routes</div>
 			<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">
 				for _, s := range routes {
 					if groupHasRoute(g.ID, s.ID, groupRoutes) {
@@ -795,6 +795,7 @@ templ AdminAgentsPage(data AdminAgentsData) {
 		<div class="page-header">
 			<p class="page-desc">Remote WireGuard agents. Each agent manages a WireGuard interface on a remote server and receives peer updates from Wicket.</p>
 		</div>
+		<div id="agent-token-result" style="margin-bottom:12px"></div>
 		<div id="agents-content" hx-get="/agents/list" hx-trigger="refresh from:body" hx-swap="innerHTML">
 			@AgentsList(data)
 		</div>
@@ -908,9 +909,12 @@ templ AgentsList(data AdminAgentsData) {
 		</div>
 		<div class="card form-panel">
 			<h3>Register Agent</h3>
-			<p class="form-hint" style="margin-bottom:14px">The token is shown once. Store it securely — it authenticates the agent to Wicket.</p>
+			<p class="form-hint" style="margin-bottom:10px">The token is shown once. Store it securely.</p>
+			<div style="background:var(--bg-2,#f3f4f6);border-radius:6px;padding:10px 12px;margin-bottom:14px;font-size:12px">
+				<div style="color:var(--text-2);margin-bottom:4px;font-weight:500">Install on a remote server:</div>
+				<code style="word-break:break-all;color:var(--primary)">curl -fsSL https://your-domain/agent/install.sh | sudo bash</code>
+			</div>
 			<div id="agent-form-error" style="margin-bottom:8px"></div>
-			<div id="agent-token-result" style="margin-bottom:8px"></div>
 			<form hx-post="/agents"
 				hx-target="#agent-token-result"
 				hx-swap="innerHTML"

@@ -34,11 +34,24 @@ var (
 	listenPort        = flag.Int("listen-port", 51820, "WireGuard listen port")
 	privateKey        = flag.String("private-key", "", "WireGuard private key (auto-generated if empty)")
 	keepPeersOnDiscon = flag.Bool("keep-peers-on-disconnect", true, "Keep WireGuard peers when disconnected from Wicket (recommended)")
+	generateKey       = flag.Bool("generate-key", false, "Generate a WireGuard private key and print it, then exit")
 	version           = "dev"
 )
 
 func main() {
 	flag.Parse()
+
+	// --generate-key: print a new private key and exit (used by install scripts)
+	if *generateKey {
+		priv, pub, err := wireguard.GenerateKeypair()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "generating keypair: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("PRIVATE_KEY=%s\n", priv)
+		fmt.Fprintf(os.Stderr, "Public key: %s\n", pub)
+		return
+	}
 
 	if *serverURL == "" || *token == "" {
 		fmt.Fprintln(os.Stderr, "usage: wicket-agent --server <wss://...> --token <token> [--interface wg1] [--listen-port 51820] [--private-key <key>]")
@@ -203,7 +216,6 @@ func applySync(pm wireguard.PeerManager, payload agent.SyncPayload) error {
 			log.Printf("Interface %s address set to %s", *iface, payload.InterfaceAddress)
 		}
 	}
-
 
 	currentKeys, err := pm.ListPeers()
 	if err != nil {

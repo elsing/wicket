@@ -6,8 +6,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -72,6 +74,11 @@ func NewHandler(
 
 	// Public (unauthenticated) routes
 	r.Get("/health", h.handleHealth)
+
+	// Agent download — unauthenticated, rate-limited per IP.
+	// Serves the wicket-agent binary and a ready-to-run install script.
+	r.With(httprate.LimitByIP(10, time.Minute)).Get("/agent/download", h.handleAgentDownload)
+	r.With(httprate.LimitByIP(10, time.Minute)).Get("/agent/install.sh", h.handleAgentInstallScript)
 	r.Get("/auth/login", h.handleLogin)
 	r.Get("/auth/callback", h.handleCallback)
 	r.Post("/auth/logout", h.handleLogout)
@@ -114,6 +121,134 @@ func NewHandler(
 func (h *Handler) serverError(w http.ResponseWriter, msg string, err error) {
 	h.log.Error("portal: "+msg, zap.Error(err))
 	http.Error(w, msg, http.StatusInternalServerError)
+}
+
+// agentBinaryPath is where wicket-agent lives inside the container.
+const agentBinaryPath = "/usr/local/bin/wicket-agent"
+
+// handleAgentDownload serves the wicket-agent binary directly.
+// Rate-limited to 10 requests/minute per IP.
+func (h *Handler) handleAgentDownload(w http.ResponseWriter, r *http.Request) {
+	f, err := os.Open(agentBinaryPath)
+	if err != nil {
+		h.log.Warn("agent binary not found", zap.String("path", agentBinaryPath), zap.Error(err))
+		http.Error(w, "agent binary not available", http.StatusNotFound)
+		return
+	}
+	defer f.Close()
+
+	stat, err := f.Stat()
+	if err != nil {
+		h.serverError(w, "stat agent binary", err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", `attachment; filename="wicket-agent"`)
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", stat.Size()))
+	w.Header().Set("Cache-Control", "no-store")
+	http.ServeContent(w, r, "wicket-agent", stat.ModTime(), f)
+}
+
+// handleAgentInstallScript returns a shell script that downloads and installs
+// the agent binary, prompts for configuration, and sets up a systemd service.
+func (h *Handler) handleAgentInstallScript(w http.ResponseWriter, r *http.Request) {
+	// Determine the public URL from config, falling back to the request host.
+	baseURL := h.cfg.Server.ExternalURL
+	if baseURL == "" {
+		scheme := "https"
+		if r.TLS == nil && r.Header.Get("X-Forwarded-Proto") != "https" {
+			scheme = "http"
+		}
+		baseURL = scheme + "://" + r.Host
+	}
+
+	script := generateInstallScript(baseURL)
+	w.Header().Set("Content-Type", "text/x-shellscript")
+	w.Header().Set("Content-Disposition", `inline; filename="install-agent.sh"`)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Write([]byte(script)) //nolint:errcheck
+}
+
+func generateInstallScript(serverURL string) string {
+	return `#!/usr/bin/env bash
+# wicket-agent installer
+# Usage: curl -fsSL ` + serverURL + `/agent/install.sh | bash
+set -euo pipefail
+
+WICKET_SERVER="` + serverURL + `"
+INSTALL_DIR="/usr/local/bin"
+SERVICE_NAME="wicket-agent"
+
+RED='''\033[0;31m'''; GREEN='''\033[0;32m'''; YELLOW='''\033[1;33m'''; NC='''\033[0m'''
+
+info()    { echo -e "${GREEN}[wicket-agent]${NC} $*"; }
+warning() { echo -e "${YELLOW}[wicket-agent]${NC} $*"; }
+error()   { echo -e "${RED}[wicket-agent]${NC} $*" >&2; exit 1; }
+
+# Must run as root
+[ "$(id -u)" -eq 0 ] || error "Please run as root: sudo bash <(curl -fsSL ${WICKET_SERVER}/agent/install.sh)"
+
+info "Downloading wicket-agent from ${WICKET_SERVER}..."
+curl -fsSL --output "${INSTALL_DIR}/wicket-agent" "${WICKET_SERVER}/agent/download"
+chmod +x "${INSTALL_DIR}/wicket-agent"
+info "Installed to ${INSTALL_DIR}/wicket-agent"
+
+# Prompt for configuration
+echo ""
+read -rp "Agent token (from Wicket admin UI): " AGENT_TOKEN
+[ -z "${AGENT_TOKEN}" ] && error "Token is required"
+
+read -rp "WireGuard interface name [wg1]: " WG_IFACE
+WG_IFACE="${WG_IFACE:-wg1}"
+
+read -rp "WireGuard listen port [51820]: " WG_PORT
+WG_PORT="${WG_PORT:-51820}"
+
+# Generate WireGuard keypair using wicket-agent itself
+info "Generating WireGuard keypair..."
+KEYGEN_OUTPUT=$(${INSTALL_DIR}/wicket-agent --generate-key 2>&1)
+PRIVATE_KEY=$(echo "${KEYGEN_OUTPUT}" | grep "^PRIVATE_KEY=" | cut -d= -f2)
+PUBLIC_KEY=$(echo "${KEYGEN_OUTPUT}" | grep "Public key:" | awk '''{print $NF}''')
+[ -z "${PRIVATE_KEY}" ] && error "Failed to generate WireGuard keypair"
+info "Public key: ${PUBLIC_KEY}"
+
+# Create systemd service
+info "Creating systemd service..."
+cat > "/etc/systemd/system/${SERVICE_NAME}.service" << EOF
+[Unit]
+Description=Wicket VPN Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=${INSTALL_DIR}/wicket-agent \
+    --server ${WICKET_SERVER} \
+    --token ${AGENT_TOKEN} \
+    --interface ${WG_IFACE} \
+    --listen-port ${WG_PORT} \
+    --private-key ${PRIVATE_KEY}
+Restart=always
+RestartSec=10
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable "${SERVICE_NAME}"
+systemctl start "${SERVICE_NAME}"
+
+echo ""
+info "wicket-agent installed and started!"
+info "Check status: systemctl status ${SERVICE_NAME}"
+info "View logs:    journalctl -u ${SERVICE_NAME} -f"
+echo ""
+warning "Public key: ${PUBLIC_KEY}"
+warning "This key will be registered in Wicket automatically when the agent connects."
+`
 }
 
 func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {

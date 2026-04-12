@@ -76,7 +76,7 @@ func execMigration(db *sql.DB, sql string) error {
 		if stmt == "" || strings.HasPrefix(stmt, "--") {
 			continue
 		}
-		// For ALTER TABLE ADD COLUMN, check if the column already exists.
+		// For ALTER TABLE ADD COLUMN, skip if column already exists.
 		if isAddColumn(stmt) {
 			table, col := parseAddColumn(stmt)
 			if table != "" && col != "" {
@@ -86,6 +86,26 @@ func execMigration(db *sql.DB, sql string) error {
 				}
 				if exists {
 					continue // already present — skip
+				}
+			}
+		}
+		// For ALTER TABLE RENAME COLUMN, skip if source doesn't exist or target already does.
+		if isRenameColumn(stmt) {
+			table, oldCol, newCol := parseRenameColumn(stmt)
+			if table != "" && oldCol != "" && newCol != "" {
+				srcExists, err := columnExists(db, table, oldCol)
+				if err != nil {
+					return err
+				}
+				if !srcExists {
+					continue // source column doesn't exist — skip
+				}
+				dstExists, err := columnExists(db, table, newCol)
+				if err != nil {
+					return err
+				}
+				if dstExists {
+					continue // target already exists — skip
 				}
 			}
 		}
@@ -179,6 +199,21 @@ func parseAddColumn(stmt string) (table, column string) {
 		return words[2], words[5]
 	}
 	return "", ""
+}
+
+func isRenameColumn(stmt string) bool {
+	upper := strings.ToUpper(strings.TrimSpace(stmt))
+	return strings.HasPrefix(upper, "ALTER TABLE") && strings.Contains(upper, "RENAME COLUMN")
+}
+
+// parseRenameColumn parses: ALTER TABLE <table> RENAME COLUMN <old> TO <new>
+func parseRenameColumn(stmt string) (table, oldCol, newCol string) {
+	words := strings.Fields(stmt)
+	// 0=ALTER 1=TABLE 2=<table> 3=RENAME 4=COLUMN 5=<old> 6=TO 7=<new>
+	if len(words) >= 8 {
+		return words[2], words[5], words[7]
+	}
+	return "", "", ""
 }
 
 func columnExists(db *sql.DB, table, column string) (bool, error) {
