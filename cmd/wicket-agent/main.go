@@ -153,7 +153,8 @@ func runLoop(ctx context.Context, privKey string) {
 }
 
 func connect(ctx context.Context, privKey string) error {
-	wsURL := *serverURL + "/agent/connect"
+	// serverURL is the full WebSocket URL including path
+	wsURL := *serverURL
 	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
 		HTTPHeader: map[string][]string{
 			"Authorization": {"Bearer " + *token},

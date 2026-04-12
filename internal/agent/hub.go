@@ -207,6 +207,8 @@ func (h *Hub) serveAgent(ctx context.Context, ca *ConnectedAgent) {
 				h.log.Debug("agent ping timeout", zap.String("agent", ca.Name))
 				return
 			}
+			// Update last_seen on each successful ping
+			_ = h.db.TouchAgentSeen(context.Background(), ca.ID)
 		}
 	}
 }
@@ -263,7 +265,8 @@ func BuildSyncPayload(ctx context.Context, database *db.DB, agentID, wgInterface
 	seen := make(map[string]bool)
 
 	for _, g := range groups {
-		// Get all active sessions for devices in this group
+		// Only devices with an active (non-expired, non-revoked) session are peers.
+		// This is the core security invariant: no session = no routing.
 		sessions, err := database.ListActiveSessions(ctx)
 		if err != nil {
 			continue
@@ -278,7 +281,6 @@ func BuildSyncPayload(ctx context.Context, database *db.DB, agentID, wgInterface
 			}
 			seen[dev.PublicKey] = true
 
-			// Get allowed IPs (routes) for this device
 			routes, err := database.ListRoutesForDevice(ctx, dev.ID)
 			allowedIPs := []string{dev.AssignedIP + "/32"}
 			if err == nil {

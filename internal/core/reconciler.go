@@ -47,6 +47,7 @@ type Reconciler struct {
 	agentHub AgentPusher
 	log      *zap.Logger
 	retain   time.Duration
+	trigger  chan struct{}
 
 	mu      sync.Mutex
 	lastRun time.Time
@@ -55,6 +56,7 @@ type Reconciler struct {
 // NewReconciler creates a Reconciler.
 func NewReconciler(database *db.DB, peers wireguard.PeerManager, svc *Service, retainMetrics time.Duration, log *zap.Logger) *Reconciler {
 	return &Reconciler{
+		trigger: make(chan struct{}, 1),
 		db:     database,
 		peers:  peers,
 		svc:    svc,
@@ -77,6 +79,15 @@ func (r *Reconciler) LastRun() time.Time {
 
 // Run starts the reconciliation loop, ticking at interval until ctx is cancelled.
 // An initial pass runs immediately on startup to restore peer state after restarts.
+// Trigger schedules an immediate reconcile pass (e.g. after a session is created/revoked).
+// Non-blocking: if a pass is already queued, this is a no-op.
+func (r *Reconciler) Trigger() {
+	select {
+	case r.trigger <- struct{}{}:
+	default:
+	}
+}
+
 func (r *Reconciler) Run(ctx context.Context, interval time.Duration) {
 	r.log.Info("reconciler started", zap.Duration("interval", interval))
 
@@ -96,6 +107,8 @@ func (r *Reconciler) Run(ctx context.Context, interval time.Duration) {
 		case <-ctx.Done():
 			r.log.Info("reconciler stopped")
 			return
+		case <-r.trigger:
+			r.pass()
 		case <-ticker.C:
 			r.pass()
 		}

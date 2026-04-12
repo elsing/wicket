@@ -375,6 +375,41 @@ func (d *DB) ListAllDevicesRaw(ctx context.Context) ([]*Device, error) {
 	return scanDevices(rows)
 }
 
+func (d *DB) ListDevicesForGroup(ctx context.Context, groupID string) ([]*Device, error) {
+	rows, err := d.sql.QueryContext(ctx, `
+		SELECT d.id, d.user_id, d.group_id, d.name, d.public_key, d.assigned_ip,
+		       d.is_approved, d.is_active, d.auto_renew, d.config_downloaded,
+		       d.created_at, d.updated_at, d.last_seen_at,
+		       u.email, u.display_name, g.name as group_name
+		FROM devices d
+		LEFT JOIN users u ON u.id = d.user_id
+		LEFT JOIN groups g ON g.id = d.group_id
+		WHERE d.group_id = ?
+		ORDER BY d.created_at DESC`, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var devices []*Device
+	for rows.Next() {
+		var dev Device
+		var userEmail, userDisplay, groupName sql.NullString
+		if err := rows.Scan(
+			&dev.ID, &dev.UserID, &dev.GroupID, &dev.Name,
+			&dev.PublicKey, &dev.AssignedIP,
+			&dev.IsApproved, &dev.IsActive, &dev.AutoRenew, &dev.ConfigDownloaded,
+			&dev.CreatedAt, &dev.UpdatedAt, &dev.LastSeenAt,
+			&userEmail, &userDisplay, &groupName,
+		); err != nil {
+			return nil, err
+		}
+		dev.User = &User{ID: dev.UserID, Email: userEmail.String, DisplayName: userDisplay.String}
+		dev.Group = &Group{ID: dev.GroupID, Name: groupName.String}
+		devices = append(devices, &dev)
+	}
+	return devices, rows.Err()
+}
+
 func (d *DB) ListPendingDevices(ctx context.Context) ([]*Device, error) {
 	rows, err := d.sql.QueryContext(ctx, `
 		SELECT d.id, d.user_id, d.group_id, d.name, d.public_key, d.assigned_ip,
@@ -629,6 +664,7 @@ func scanSession(row *sql.Row) (*Session, error) {
 	}
 	return &s, err
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Agents

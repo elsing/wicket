@@ -577,6 +577,7 @@ func (s *Service) ActivateSession(ctx context.Context, deviceID, userID, ipAddre
 
 	s.emit(Event{Type: EventSessionCreated, DeviceID: deviceID, UserID: userID, OwnerID: userID,
 		Payload: map[string]any{"expires_at": expiresAt}})
+	if s.reconciler != nil { s.reconciler.Trigger() } // push peer to agents immediately
 
 	// Add the peer to WireGuard immediately rather than waiting for the reconciler.
 	go func() {
@@ -747,6 +748,7 @@ func (s *Service) RevokeSession(ctx context.Context, sessionID, actorUserID, ipA
 		ownerID = dev.UserID
 	}
 	s.emit(Event{Type: EventSessionRevoked, DeviceID: session.DeviceID, UserID: actorUserID, OwnerID: ownerID})
+	if s.reconciler != nil { s.reconciler.Trigger() } // remove peer from agents immediately
 	return nil
 }
 

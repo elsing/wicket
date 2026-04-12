@@ -586,7 +586,7 @@ func (h *Handler) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 			maxExt = &n
 		}
 	}
-	if err := h.svc.DB().UpdateGroup(r.Context(), groupID, name, r.FormValue("description"), d, maxExt, r.FormValue("endpoint_override")); err != nil {
+	if err := h.svc.DB().UpdateGroup(r.Context(), groupID, name, r.FormValue("description"), d, maxExt, r.FormValue("endpoint_override"), r.FormValue("is_public") == "true"); err != nil {
 		if isUniqueViolation(err) {
 			http.Error(w, "A group with that name already exists", http.StatusConflict)
 			return
@@ -939,14 +939,7 @@ func (h *Handler) renderDeviceRow(w http.ResponseWriter, r *http.Request, device
 
 // renderGroupCard fetches current group data and renders just that card.
 func (h *Handler) renderGroupCard(w http.ResponseWriter, r *http.Request, groupID string) {
-	groups, _ := h.svc.ListAllGroups(r.Context())
-	subnets, _ := h.svc.ListAllRoutes(r.Context())
-	groupRoutes, _ := h.svc.DB().ListGroupRoutes(r.Context())
-	renderGroupCard(w, r, AdminGroupsData{
-		Groups:      groups,
-		Routes:      subnets,
-		GroupRoutes: groupRoutes,
-	}, groupID)
+	renderGroupCard(w, r, h.groupsData(r), groupID)
 }
 
 func (h *Handler) handleDeleteDevice(w http.ResponseWriter, r *http.Request) {

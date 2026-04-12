@@ -231,16 +231,16 @@ func (d *DB) DeviceCountPerGroup(ctx context.Context) (map[string]int, error) {
 
 // UpdateGroup updates a group's name, description, session duration, max extensions,
 // routing mode and endpoint override.
-func (d *DB) UpdateGroup(ctx context.Context, id, name, description string, sessionDuration time.Duration, maxExtensions *int64, endpointOverride string) error {
+func (d *DB) UpdateGroup(ctx context.Context, id, name, description string, sessionDuration time.Duration, maxExtensions *int64, endpointOverride string, isPublic bool) error {
 	var maxExt interface{}
 	if maxExtensions != nil {
 		maxExt = *maxExtensions
 	}
 	_, err := d.sql.ExecContext(ctx, `
 		UPDATE groups SET name = ?, description = ?, session_duration = ?, max_extensions = ?,
-		                  endpoint_override = ?
+		                  endpoint_override = ?, is_public = ?
 		WHERE id = ?
-	`, name, description, int64(sessionDuration.Seconds()), maxExt, endpointOverride, id)
+	`, name, description, int64(sessionDuration.Seconds()), maxExt, endpointOverride, isPublic, id)
 	return err
 }
 

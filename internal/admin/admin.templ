@@ -715,7 +715,7 @@ templ GroupCard(g *db.Group, routes []*db.Route, groupRoutes map[string][]string
 		<div id={ "edit-" + g.ID } style="display:none;background:var(--bg-2);border-radius:8px;padding:14px;margin-bottom:14px">
 			<form hx-put={ "/groups/" + g.ID }
 				hx-target={ "#group-" + g.ID } hx-swap="outerHTML"
-				style="display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end">
+				style="display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:end">
 				<div>
 					<label style="font-size:12px;font-weight:500;color:var(--text-2);display:block;margin-bottom:4px">Name</label>
 					<input type="text" name="name" class="input" value={ g.Name } required/>
@@ -731,10 +731,24 @@ templ GroupCard(g *db.Group, routes []*db.Route, groupRoutes map[string][]string
 				<div>
 					<label style="font-size:12px;font-weight:500;color:var(--text-2);display:block;margin-bottom:4px">Max Extensions</label>
 					if g.MaxExtensions.Valid {
-						<input type="number" name="max_extensions" class="input" value={ itoa(int(g.MaxExtensions.Int64)) } min="0" style="width:100px"/>
+						<input type="number" name="max_extensions" class="input" value={ itoa(int(g.MaxExtensions.Int64)) } min="0"/>
 					} else {
-						<input type="number" name="max_extensions" class="input" placeholder="∞" min="0" style="width:100px"/>
+						<input type="number" name="max_extensions" class="input" placeholder="∞" min="0"/>
 					}
+				</div>
+				<div>
+					<label style="font-size:12px;font-weight:500;color:var(--text-2);display:block;margin-bottom:4px">Endpoint Override</label>
+					<input type="text" name="endpoint_override" class="input" value={ g.EndpointOverride } placeholder="optional"/>
+				</div>
+				<div style="grid-column:1/-1;display:flex;align-items:center;gap:16px">
+					<label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+						if g.IsPublic {
+							<input type="checkbox" name="is_public" value="true" class="toggle" checked/>
+						} else {
+							<input type="checkbox" name="is_public" value="true" class="toggle"/>
+						}
+						<span>Public (any user can select this group)</span>
+					</label>
 				</div>
 				<div style="grid-column:1/-1;display:flex;gap:8px">
 					<button type="submit" class="btn btn-sm btn-primary">Save</button>
