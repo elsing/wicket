@@ -665,19 +665,39 @@ templ GroupCard(g *db.Group, routes []*db.Route, groupRoutes map[string][]string
 						<span>↻ unlimited ext</span>
 					}
 				</div>
+				<div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;margin-top:8px">Agent</div>
 				if len(groupData.GroupAgents[g.ID]) > 0 {
-					<div style="font-size:12px;color:var(--text-2);margin-top:4px">
-						Agents:
-						for _, agentID := range groupData.GroupAgents[g.ID] {
-							if agent, ok := groupData.AgentsByID[agentID]; ok {
-								<span class="badge badge-muted" style="font-size:11px;margin-left:4px">{ agent.Name }</span>
+					for _, agentID := range groupData.GroupAgents[g.ID] {
+						if agent, ok := groupData.AgentsByID[agentID]; ok {
+							<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+								<span class="badge badge-success" style="font-size:11px">{ agent.Name }</span>
+								if agent.VPNPool != "" {
+									<span style="font-size:11px;color:var(--text-2)">{ agent.VPNPool }</span>
+								}
+								<button class="btn btn-sm btn-ghost" style="color:var(--error-text);padding:0 6px;font-size:13px"
+									hx-delete={ "/groups/" + g.ID + "/agents/" + agentID }
+									hx-target={ "#group-" + g.ID } hx-swap="outerHTML">×</button>
+							</div>
+						}
+					}
+				} else {
+					<div style="font-size:12px;color:var(--text-2);margin-bottom:6px">None — uses server directly</div>
+				}
+				if len(groupData.Agents) > 0 {
+					<select class="input" style="font-size:12px;padding:4px 8px;max-width:220px;margin-top:4px"
+						name="agent_id"
+						hx-post={ "/groups/" + g.ID + "/agents" }
+						hx-target={ "#group-" + g.ID } hx-swap="outerHTML"
+						hx-include="this"
+						hx-trigger="change">
+						<option value="">Assign agent…</option>
+						for _, a := range groupData.Agents {
+							if a.IsActive && !agentAssigned(a.ID, groupData.GroupAgents[g.ID]) {
+								<option value={ a.ID }>{ a.Name }{ agentOptionLabel(a) }</option>
 							}
 						}
-					</div>
-				} else {
-					<div style="font-size:12px;color:var(--warning-text);margin-top:4px">⚠ No agents assigned</div>
+					</select>
 				}
-			</div>
 			<div style="display:flex;gap:8px;flex-shrink:0">
 				<button class="btn btn-sm btn-outline"
 					data-toggle-group-edit={ g.ID }>
@@ -686,7 +706,7 @@ templ GroupCard(g *db.Group, routes []*db.Route, groupRoutes map[string][]string
 				<button class="btn btn-sm btn-ghost" style="color:var(--error-text)"
 					hx-delete={ "/groups/" + g.ID }
 					hx-target={ "#group-" + g.ID } hx-swap="delete"
-					hx-confirm={ "Delete group \"" + g.Name + "\"? Devices must be reassigned first." }>
+					hx-confirm="Delete this group? Devices must be reassigned first.">
 					Delete
 				</button>
 			</div>
@@ -756,6 +776,7 @@ templ GroupCard(g *db.Group, routes []*db.Route, groupRoutes map[string][]string
 			</select>
 		</div>
 	</div>
+</div>
 }
 
 // GroupsList renders just the groups list for HTMX innerHTML swaps.
@@ -913,7 +934,6 @@ templ AgentsList(data AdminAgentsData) {
 				</div>
 				<button type="submit" class="btn btn-primary">Register Agent</button>
 			</form>
-			<div id="agent-token-result" style="margin-top:16px"></div>
 		</div>
 	</div>
 }
@@ -958,8 +978,7 @@ templ MetricsTable(data AdminMetricsData) {
 									}
 								</td>
 								<td><code>{ dev.AssignedIP }</code></td>
-								{{ snap := data.LatestMetrics[dev.ID] }}
-								if snap != nil {
+								if snap := data.LatestMetrics[dev.ID]; snap != nil {
 									<td class="text-muted">{ formatBytes(snap.BytesSent) }</td>
 									<td class="text-muted">{ formatBytes(snap.BytesReceived) }</td>
 									<td class="text-muted">

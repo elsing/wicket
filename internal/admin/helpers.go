@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/wicket-vpn/wicket/internal/db"
 )
 
 // firstChar returns the first character of a string, uppercased, for avatars.
@@ -134,4 +136,24 @@ func groupPlural(n int) string {
 		return ""
 	}
 	return "s"
+}
+
+// agentOptionLabel returns a short label for the agent assign dropdown.
+// Called from admin.templ — gopls reports unused until templ generate runs.
+func agentOptionLabel(a *db.Agent) string {
+	if a.VPNPool != "" {
+		return " (" + a.VPNPool + ")"
+	}
+	return ""
+}
+
+// agentAssigned reports whether agentID is in the assigned list.
+// Called from admin.templ.
+func agentAssigned(agentID string, assigned []string) bool {
+	for _, id := range assigned {
+		if id == agentID {
+			return true
+		}
+	}
+	return false
 }

@@ -1,3 +1,48 @@
+// ── Confirmation Modal ────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', function() {
+  const modal = document.createElement('div');
+  modal.id = 'confirm-modal';
+  modal.style.cssText = 'display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.45);align-items:center;justify-content:center';
+  modal.innerHTML = `
+    <div style="background:var(--bg-1,#fff);border-radius:10px;padding:24px 28px;max-width:400px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,.18)">
+      <p id="confirm-modal-msg" style="margin:0 0 20px;font-size:15px;color:var(--text-1)"></p>
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <button id="confirm-modal-cancel" class="btn btn-ghost">Cancel</button>
+        <button id="confirm-modal-ok" class="btn" style="background:var(--error-bg,#fee2e2);color:var(--error-text,#b91c1c);border:1px solid var(--error-text,#b91c1c)">Confirm</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+
+  let resolveFn = null;
+
+  function showModal(msg) {
+    return new Promise(resolve => {
+      resolveFn = resolve;
+      document.getElementById('confirm-modal-msg').textContent = msg;
+      modal.style.display = 'flex';
+    });
+  }
+
+  function hideModal(result) {
+    modal.style.display = 'none';
+    if (resolveFn) { resolveFn(result); resolveFn = null; }
+  }
+
+  document.getElementById('confirm-modal-cancel').addEventListener('click', () => hideModal(false));
+  document.getElementById('confirm-modal-ok').addEventListener('click', () => hideModal(true));
+  modal.addEventListener('click', e => { if (e.target === modal) hideModal(false); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') hideModal(false); });
+
+  // Intercept htmx confirm events
+  document.body.addEventListener('htmx:confirm', function(e) {
+    if (!e.detail.question) return;
+    e.preventDefault();
+    showModal(e.detail.question).then(ok => {
+      if (ok) e.detail.issueRequest(true);
+    });
+  });
+});
+
 // Wicket admin portal JS
 // Uses window.wicketWS so the connection persists across HTMX partial swaps
 // and script re-executions without "already declared" errors.
