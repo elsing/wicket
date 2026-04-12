@@ -96,17 +96,74 @@ func execMigration(db *sql.DB, sql string) error {
 	return nil
 }
 
-func splitStatements(sql string) []string {
-	// Simple split on semicolons. Doesn't handle semicolons inside strings,
-	// but our migrations don't have those.
-	var stmts []string
-	for _, s := range strings.Split(sql, ";") {
-		s = strings.TrimSpace(s)
-		if s != "" {
-			stmts = append(stmts, s)
+func splitStatements(src string) []string {
+	// Strip inline -- comments first: they can contain semicolons
+	// (e.g. "-- seconds; default 24 hours") that would break naive splitting.
+	var sb strings.Builder
+	for _, line := range strings.Split(src, "\n") {
+		if idx := strings.Index(line, "--"); idx >= 0 {
+			line = line[:idx]
 		}
+		sb.WriteString(line)
+		sb.WriteByte('\n')
+	}
+	cleaned := sb.String()
+
+	// Walk character by character, tracking BEGIN...END depth so that
+	// trigger bodies (which contain semicolons) are kept intact.
+	var stmts []string
+	var cur strings.Builder
+	depth := 0
+	n := len(cleaned)
+
+	for i := 0; i < n; {
+		// Detect BEGIN keyword at a word boundary.
+		if i+5 <= n && strings.ToUpper(cleaned[i:i+5]) == "BEGIN" &&
+			(i == 0 || !isAlpha(cleaned[i-1])) &&
+			(i+5 >= n || !isAlpha(cleaned[i+5])) {
+			depth++
+			cur.WriteString("BEGIN")
+			i += 5
+			continue
+		}
+		// Detect END keyword at a word boundary.
+		if i+3 <= n && strings.ToUpper(cleaned[i:i+3]) == "END" &&
+			(i == 0 || !isAlpha(cleaned[i-1])) &&
+			(i+3 >= n || !isAlpha(cleaned[i+3])) {
+			depth--
+			cur.WriteString("END")
+			i += 3
+			if depth == 0 {
+				if s := strings.TrimSpace(cur.String()); s != "" {
+					stmts = append(stmts, s)
+				}
+				cur.Reset()
+			}
+			continue
+		}
+		if cleaned[i] == ';' {
+			if depth == 0 {
+				if s := strings.TrimSpace(cur.String()); s != "" {
+					stmts = append(stmts, s)
+				}
+				cur.Reset()
+			} else {
+				cur.WriteByte(';')
+			}
+			i++
+			continue
+		}
+		cur.WriteByte(cleaned[i])
+		i++
+	}
+	if s := strings.TrimSpace(cur.String()); s != "" {
+		stmts = append(stmts, s)
 	}
 	return stmts
+}
+
+func isAlpha(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'
 }
 
 func isAddColumn(stmt string) bool {
