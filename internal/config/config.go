@@ -40,8 +40,8 @@ type ServerConfig struct {
 
 // DBConfig holds database settings.
 type DBConfig struct {
-	// Path is the file path for the SQLite database, e.g. /data/wicket.db
-	Path string `yaml:"path"`
+	// DSN format Postgres connection string.
+	DSN string `yaml:"dsn"`
 }
 
 // WireGuardConfig holds WireGuard interface settings for the local peer manager.

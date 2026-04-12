@@ -10,9 +10,9 @@ import (
 
 	"go.uber.org/zap"
 
+	agentpkg "github.com/wicket-vpn/wicket/internal/agent"
 	"github.com/wicket-vpn/wicket/internal/config"
 	"github.com/wicket-vpn/wicket/internal/db"
-	agentpkg "github.com/wicket-vpn/wicket/internal/agent"
 	"github.com/wicket-vpn/wicket/internal/wireguard"
 )
 
@@ -36,11 +36,11 @@ type Server struct {
 // Fails fast if the database or WireGuard interface are unavailable.
 func New(cfg *config.Config, log *zap.Logger) (*Server, error) {
 	// ── Database ─────────────────────────────────────────────────────────────
-	database, err := db.Open(cfg.DB.Path)
+	database, err := db.Open(cfg.DB.DSN)
 	if err != nil {
-		return nil, fmt.Errorf("opening database at %q: %w", cfg.DB.Path, err)
+		return nil, fmt.Errorf("opening database at %q: %w", cfg.DB.DSN, err)
 	}
-	log.Info("database ready", zap.String("path", cfg.DB.Path))
+	log.Info("database ready", zap.String("path", cfg.DB.DSN))
 
 	// ── WireGuard ─────────────────────────────────────────────────────────────
 	// Ensure the WireGuard interface exists with the correct address before
@@ -151,7 +151,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.log.Info("CLI socket listening", zap.String("path", s.cfg.Server.SocketPath))
 
 	publicErrCh := make(chan error, 1)
-	adminErrCh  := make(chan error, 1)
+	adminErrCh := make(chan error, 1)
 
 	go func() {
 		s.log.Info("public portal listening", zap.String("addr", s.cfg.Public.BindAddr))
