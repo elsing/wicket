@@ -28,7 +28,7 @@ func mustJSON(v any) string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 func (d *DB) GetUserByOIDCSub(ctx context.Context, sub string) (*User, error) {
-	row := d.sql.QueryRowContext(ctx,
+	row := d.reader.QueryRowContext(ctx,
 		`SELECT id, oidc_sub, email, display_name, is_admin, is_active,
 		        created_at, updated_at, last_login_at
 		 FROM users WHERE oidc_sub = ?`, sub)
@@ -36,7 +36,7 @@ func (d *DB) GetUserByOIDCSub(ctx context.Context, sub string) (*User, error) {
 }
 
 func (d *DB) GetUserByID(ctx context.Context, id string) (*User, error) {
-	row := d.sql.QueryRowContext(ctx,
+	row := d.reader.QueryRowContext(ctx,
 		`SELECT id, oidc_sub, email, display_name, is_admin, is_active,
 		        created_at, updated_at, last_login_at
 		 FROM users WHERE id = ?`, id)
@@ -44,7 +44,7 @@ func (d *DB) GetUserByID(ctx context.Context, id string) (*User, error) {
 }
 
 func (d *DB) GetUserByEmail(ctx context.Context, email string) (*User, error) {
-	row := d.sql.QueryRowContext(ctx,
+	row := d.reader.QueryRowContext(ctx,
 		`SELECT id, oidc_sub, email, display_name, is_admin, is_active,
 		        created_at, updated_at, last_login_at
 		 FROM users WHERE email = ?`, email)
@@ -72,7 +72,7 @@ func (d *DB) UpsertUser(ctx context.Context, sub, email, displayName string) (*U
 }
 
 func (d *DB) ListUsers(ctx context.Context) ([]*User, error) {
-	rows, err := d.sql.QueryContext(ctx,
+	rows, err := d.reader.QueryContext(ctx,
 		`SELECT id, oidc_sub, email, display_name, is_admin, is_active,
 		        created_at, updated_at, last_login_at
 		 FROM users ORDER BY email`)
@@ -135,7 +135,7 @@ func scanUsers(rows *sql.Rows) ([]*User, error) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 func (d *DB) GetGroupByID(ctx context.Context, id string) (*Group, error) {
-	row := d.sql.QueryRowContext(ctx,
+	row := d.reader.QueryRowContext(ctx,
 		`SELECT id, name, description, session_duration, max_extensions, is_public,
 		        endpoint_override, created_at, updated_at
 		 FROM groups WHERE id = ?`, id)
@@ -143,7 +143,7 @@ func (d *DB) GetGroupByID(ctx context.Context, id string) (*Group, error) {
 }
 
 func (d *DB) ListGroups(ctx context.Context) ([]*Group, error) {
-	rows, err := d.sql.QueryContext(ctx,
+	rows, err := d.reader.QueryContext(ctx,
 		`SELECT id, name, description, session_duration, max_extensions, is_public,
 		        endpoint_override, created_at, updated_at
 		 FROM groups ORDER BY name`)
@@ -155,7 +155,7 @@ func (d *DB) ListGroups(ctx context.Context) ([]*Group, error) {
 }
 
 func (d *DB) ListGroupsForUser(ctx context.Context, userID string) ([]*Group, error) {
-	rows, err := d.sql.QueryContext(ctx, `
+	rows, err := d.reader.QueryContext(ctx, `
 		SELECT DISTINCT g.id, g.name, g.description, g.session_duration,
 		                g.max_extensions, g.is_public, g.endpoint_override,
 		                g.created_at, g.updated_at
@@ -229,13 +229,13 @@ func scanGroups(rows *sql.Rows) ([]*Group, error) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 func (d *DB) GetRouteByID(ctx context.Context, id string) (*Route, error) {
-	row := d.sql.QueryRowContext(ctx,
+	row := d.reader.QueryRowContext(ctx,
 		`SELECT id, name, cidr, description, created_at, updated_at FROM subnets WHERE id = ?`, id)
 	return scanRoute(row)
 }
 
 func (d *DB) ListRoutes(ctx context.Context) ([]*Route, error) {
-	rows, err := d.sql.QueryContext(ctx,
+	rows, err := d.reader.QueryContext(ctx,
 		`SELECT id, name, cidr, description, created_at, updated_at FROM subnets ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -245,7 +245,7 @@ func (d *DB) ListRoutes(ctx context.Context) ([]*Route, error) {
 }
 
 func (d *DB) ListRoutesForDevice(ctx context.Context, deviceID string) ([]*Route, error) {
-	rows, err := d.sql.QueryContext(ctx, `
+	rows, err := d.reader.QueryContext(ctx, `
 		SELECT s.id, s.name, s.cidr, s.description, s.created_at, s.updated_at
 		FROM device_subnets ds
 		JOIN subnets s ON s.id = ds.route_id
@@ -264,7 +264,7 @@ func (d *DB) ListRoutesForDevice(ctx context.Context, deviceID string) ([]*Route
 		return subnets, nil
 	}
 	// Fall back to group subnets
-	rows2, err := d.sql.QueryContext(ctx, `
+	rows2, err := d.reader.QueryContext(ctx, `
 		SELECT s.id, s.name, s.cidr, s.description, s.created_at, s.updated_at
 		FROM group_subnets gs
 		JOIN subnets s ON s.id = gs.route_id
@@ -314,17 +314,17 @@ func scanRoutes(rows *sql.Rows) ([]*Route, error) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 func (d *DB) GetDeviceByID(ctx context.Context, id string) (*Device, error) {
-	row := d.sql.QueryRowContext(ctx, deviceSelectSQL+` WHERE id = ?`, id)
+	row := d.reader.QueryRowContext(ctx, deviceSelectSQL+` WHERE id = ?`, id)
 	return scanDevice(row)
 }
 
 func (d *DB) GetDeviceByPublicKey(ctx context.Context, key string) (*Device, error) {
-	row := d.sql.QueryRowContext(ctx, deviceSelectSQL+` WHERE public_key = ?`, key)
+	row := d.reader.QueryRowContext(ctx, deviceSelectSQL+` WHERE public_key = ?`, key)
 	return scanDevice(row)
 }
 
 func (d *DB) ListDevicesByUser(ctx context.Context, userID string) ([]*Device, error) {
-	rows, err := d.sql.QueryContext(ctx, deviceSelectSQL+` WHERE user_id = ? ORDER BY name`, userID)
+	rows, err := d.reader.QueryContext(ctx, deviceSelectSQL+` WHERE user_id = ? ORDER BY name`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -333,7 +333,7 @@ func (d *DB) ListDevicesByUser(ctx context.Context, userID string) ([]*Device, e
 }
 
 func (d *DB) ListAllDevices(ctx context.Context) ([]*Device, error) {
-	rows, err := d.sql.QueryContext(ctx, `
+	rows, err := d.reader.QueryContext(ctx, `
 		SELECT d.id, d.user_id, d.group_id, d.name, d.public_key, d.assigned_ip,
 		       d.is_approved, d.is_active, d.auto_renew, d.config_downloaded,
 		       d.created_at, d.updated_at, d.last_seen_at,
@@ -367,7 +367,7 @@ func (d *DB) ListAllDevices(ctx context.Context) ([]*Device, error) {
 }
 
 func (d *DB) ListAllDevicesRaw(ctx context.Context) ([]*Device, error) {
-	rows, err := d.sql.QueryContext(ctx, deviceSelectSQL+` ORDER BY created_at DESC`)
+	rows, err := d.reader.QueryContext(ctx, deviceSelectSQL+` ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -376,7 +376,7 @@ func (d *DB) ListAllDevicesRaw(ctx context.Context) ([]*Device, error) {
 }
 
 func (d *DB) ListDevicesForGroup(ctx context.Context, groupID string) ([]*Device, error) {
-	rows, err := d.sql.QueryContext(ctx, `
+	rows, err := d.reader.QueryContext(ctx, `
 		SELECT d.id, d.user_id, d.group_id, d.name, d.public_key, d.assigned_ip,
 		       d.is_approved, d.is_active, d.auto_renew, d.config_downloaded,
 		       d.created_at, d.updated_at, d.last_seen_at,
@@ -411,7 +411,7 @@ func (d *DB) ListDevicesForGroup(ctx context.Context, groupID string) ([]*Device
 }
 
 func (d *DB) ListPendingDevices(ctx context.Context) ([]*Device, error) {
-	rows, err := d.sql.QueryContext(ctx, `
+	rows, err := d.reader.QueryContext(ctx, `
 		SELECT d.id, d.user_id, d.group_id, d.name, d.public_key, d.assigned_ip,
 		       d.is_approved, d.is_active, d.auto_renew, d.config_downloaded,
 		       d.created_at, d.updated_at, d.last_seen_at,
@@ -445,7 +445,7 @@ func (d *DB) ListPendingDevices(ctx context.Context) ([]*Device, error) {
 }
 
 func (d *DB) ListApprovedActiveDevices(ctx context.Context) ([]*Device, error) {
-	rows, err := d.sql.QueryContext(ctx, deviceSelectSQL+` WHERE is_approved = 1 AND is_active = 1`)
+	rows, err := d.reader.QueryContext(ctx, deviceSelectSQL+` WHERE is_approved = 1 AND is_active = 1`)
 	if err != nil {
 		return nil, err
 	}
@@ -542,7 +542,7 @@ func scanDevices(rows *sql.Rows) ([]*Device, error) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 func (d *DB) GetActiveSessionForDevice(ctx context.Context, deviceID string) (*Session, error) {
-	row := d.sql.QueryRowContext(ctx, `
+	row := d.reader.QueryRowContext(ctx, `
 		SELECT id, device_id, authed_at, expires_at, extended_at,
 		       extension_count, revoked_at, revoked_by, ip_address, status
 		FROM sessions
@@ -553,7 +553,7 @@ func (d *DB) GetActiveSessionForDevice(ctx context.Context, deviceID string) (*S
 }
 
 func (d *DB) GetSessionByID(ctx context.Context, id string) (*Session, error) {
-	row := d.sql.QueryRowContext(ctx, `
+	row := d.reader.QueryRowContext(ctx, `
 		SELECT id, device_id, authed_at, expires_at, extended_at,
 		       extension_count, revoked_at, revoked_by, ip_address, status
 		FROM sessions WHERE id = ?
@@ -617,7 +617,7 @@ func (d *DB) MarkExpiredSessions(ctx context.Context) (int64, error) {
 }
 
 func (d *DB) ListActiveSessions(ctx context.Context) ([]*Session, error) {
-	rows, err := d.sql.QueryContext(ctx, `
+	rows, err := d.reader.QueryContext(ctx, `
 		SELECT s.id, s.device_id, s.authed_at, s.expires_at, s.extended_at,
 		       s.extension_count, s.revoked_at, s.revoked_by, s.ip_address, s.status,
 		       d.name as device_name, u.email as user_email
@@ -665,7 +665,6 @@ func scanSession(row *sql.Row) (*Session, error) {
 	return &s, err
 }
 
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Agents
 // ─────────────────────────────────────────────────────────────────────────────
@@ -673,7 +672,7 @@ func scanSession(row *sql.Row) (*Session, error) {
 // GetAgentByID is defined in queries_extra.go
 
 func (d *DB) ListAgents(ctx context.Context) ([]*Agent, error) {
-	rows, err := d.sql.QueryContext(ctx,
+	rows, err := d.reader.QueryContext(ctx,
 		`SELECT id, name, description, token, vpn_pool, endpoint, wg_public_key,
 		        is_active, last_seen_at, created_at
 		 FROM agents ORDER BY name`)
@@ -717,7 +716,7 @@ func (d *DB) TouchAgentSeen(ctx context.Context, id string) error {
 }
 
 func (d *DB) GetActiveAgents(ctx context.Context) ([]*Agent, error) {
-	rows, err := d.sql.QueryContext(ctx,
+	rows, err := d.reader.QueryContext(ctx,
 		`SELECT id, name, description, token, vpn_pool, endpoint, wg_public_key,
 		        is_active, last_seen_at, created_at
 		 FROM agents WHERE is_active = 1`)
@@ -757,7 +756,7 @@ func (d *DB) InsertMetricSnapshot(ctx context.Context, snap *MetricSnapshot) err
 }
 
 func (d *DB) ListMetricSnapshotsForDevice(ctx context.Context, deviceID string, since time.Time) ([]*MetricSnapshot, error) {
-	rows, err := d.sql.QueryContext(ctx, `
+	rows, err := d.reader.QueryContext(ctx, `
 		SELECT id, device_id, bytes_sent, bytes_received, last_handshake, recorded_at
 		FROM metric_snapshots
 		WHERE device_id = ? AND recorded_at >= ?
@@ -809,7 +808,7 @@ func (d *DB) WriteAuditLog(ctx context.Context, entry *AuditLog) error {
 }
 
 func (d *DB) ListAuditLog(ctx context.Context, limit int) ([]*AuditLog, error) {
-	rows, err := d.sql.QueryContext(ctx, `
+	rows, err := d.reader.QueryContext(ctx, `
 		SELECT a.id, a.user_id, a.device_id, a.agent_id, a.event, a.metadata, a.ip_address, a.created_at,
 		       u.email as user_email, dev.name as device_name
 		FROM audit_log a

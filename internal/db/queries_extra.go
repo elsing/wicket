@@ -72,7 +72,7 @@ func (d *DB) DeleteAgent(ctx context.Context, id string) error {
 
 // GetLocalAdminByUsername returns a local admin account by username.
 func (d *DB) GetLocalAdminByUsername(ctx context.Context, username string) (*LocalAdmin, error) {
-	row := d.sql.QueryRowContext(ctx,
+	row := d.reader.QueryRowContext(ctx,
 		`SELECT id, username, password_hash, created_at FROM local_admins WHERE username = ?`, username)
 	var a LocalAdmin
 	err := row.Scan(&a.ID, &a.Username, &a.PasswordHash, &a.CreatedAt)
@@ -100,7 +100,7 @@ func (d *DB) DeleteDevice(ctx context.Context, id string) error {
 func (d *DB) DeleteGroup(ctx context.Context, id string) error {
 	// Check for devices first
 	var count int
-	if err := d.sql.QueryRowContext(ctx,
+	if err := d.reader.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM devices WHERE group_id = ?`, id).Scan(&count); err != nil {
 		return err
 	}
@@ -113,7 +113,7 @@ func (d *DB) DeleteGroup(ctx context.Context, id string) error {
 
 // ListGroupRoutes returns a map of groupID -> []routeID for all groups.
 func (d *DB) ListGroupRoutes(ctx context.Context) (map[string][]string, error) {
-	rows, err := d.sql.QueryContext(ctx, `SELECT group_id, route_id FROM group_subnets`)
+	rows, err := d.reader.QueryContext(ctx, `SELECT group_id, route_id FROM group_subnets`)
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +131,7 @@ func (d *DB) ListGroupRoutes(ctx context.Context) (map[string][]string, error) {
 
 // GetLocalAdminByID returns a local admin account by ID.
 func (d *DB) GetLocalAdminByID(ctx context.Context, id string) (*LocalAdmin, error) {
-	row := d.sql.QueryRowContext(ctx,
+	row := d.reader.QueryRowContext(ctx,
 		`SELECT id, username, password_hash, created_at FROM local_admins WHERE id = ?`, id)
 	var a LocalAdmin
 	err := row.Scan(&a.ID, &a.Username, &a.PasswordHash, &a.CreatedAt)
@@ -180,7 +180,7 @@ func (d *DB) DeduplicateSessions(ctx context.Context) (int64, error) {
 
 // GetLatestMetricPerDevice returns the most recent snapshot for each device.
 func (d *DB) GetLatestMetricPerDevice(ctx context.Context) (map[string]*MetricSnapshot, error) {
-	rows, err := d.sql.QueryContext(ctx, `
+	rows, err := d.reader.QueryContext(ctx, `
 		SELECT m.id, m.device_id, m.bytes_sent, m.bytes_received, m.last_handshake, m.recorded_at
 		FROM metric_snapshots m
 		INNER JOIN (
@@ -207,7 +207,7 @@ func (d *DB) GetLatestMetricPerDevice(ctx context.Context) (map[string]*MetricSn
 
 // DeviceCountPerGroup returns a map of groupID -> count of approved devices.
 func (d *DB) DeviceCountPerGroup(ctx context.Context) (map[string]int, error) {
-	rows, err := d.sql.QueryContext(ctx, `
+	rows, err := d.reader.QueryContext(ctx, `
 		SELECT group_id, COUNT(*) as cnt
 		FROM devices
 		WHERE is_approved = 1
@@ -262,7 +262,7 @@ func (d *DB) RemoveAgentFromGroup(ctx context.Context, groupID, agentID string) 
 
 // GetGroupAgents returns all agents assigned to a group.
 func (d *DB) GetGroupAgents(ctx context.Context, groupID string) ([]*Agent, error) {
-	rows, err := d.sql.QueryContext(ctx, `
+	rows, err := d.reader.QueryContext(ctx, `
 		SELECT a.id, a.name, a.description, a.token, a.vpn_pool, a.endpoint, a.wg_public_key,
 		       a.is_active, a.last_seen_at, a.created_at
 		FROM agents a
@@ -287,7 +287,7 @@ func (d *DB) GetGroupAgents(ctx context.Context, groupID string) ([]*Agent, erro
 
 // GetGroupAgentMap returns a map of groupID -> []agentID for all groups.
 func (d *DB) GetGroupAgentMap(ctx context.Context) (map[string][]string, error) {
-	rows, err := d.sql.QueryContext(ctx, `SELECT group_id, agent_id FROM group_agents`)
+	rows, err := d.reader.QueryContext(ctx, `SELECT group_id, agent_id FROM group_agents`)
 	if err != nil {
 		return nil, err
 	}
@@ -313,7 +313,7 @@ func (d *DB) UpdateAgentDetails(ctx context.Context, id, name, description, vpnP
 
 // GetAgentByID returns a single agent by ID.
 func (d *DB) GetAgentByID(ctx context.Context, id string) (*Agent, error) {
-	row := d.sql.QueryRowContext(ctx, `
+	row := d.reader.QueryRowContext(ctx, `
 		SELECT id, name, description, token, vpn_pool, endpoint, wg_public_key,
 		       is_active, last_seen_at, created_at
 		FROM agents WHERE id = ?`, id)

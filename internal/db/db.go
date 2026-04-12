@@ -14,51 +14,71 @@ import (
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
-// DB wraps sql.DB and provides all query methods for wicket.
+// DB wraps two sql.DB pools:
+//   - writer: single connection, serialises all writes, no SQLITE_BUSY contention
+//   - reader: multiple connections, allows concurrent reads without blocking writes
+//
+// WAL journal mode makes this work: readers never block writers and vice versa.
 type DB struct {
-	sql *sql.DB
+	sql    *sql.DB // writer — also used for migrations and the SQL() accessor
+	reader *sql.DB // read pool — used for SELECT queries
 }
 
 // Open opens (or creates) the SQLite database at path, applies all pending
 // migrations, and returns a ready-to-use DB.
 func Open(path string) (*DB, error) {
-	// WAL mode allows concurrent readers with one writer.
-	// _busy_timeout=15000: wait up to 15s for locks before returning SQLITE_BUSY.
-	// _synchronous=NORMAL: safe with WAL, faster than FULL.
-	// _txlock=immediate: grab write lock immediately on BEGIN to avoid deadlocks.
-	// Single write connection serialises all writes — SQLite only allows one writer
-	// at a time anyway, so extra connections just cause SQLITE_BUSY fights.
-	// WAL journal mode allows concurrent readers on separate connections.
-	writeDSN := fmt.Sprintf(
-		"file:%s?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL",
+	baseDSN := fmt.Sprintf(
+		"file:%s?_foreign_keys=on&_journal_mode=WAL&_synchronous=NORMAL",
 		path,
 	)
 
-	sqlDB, err := sql.Open("sqlite", writeDSN)
+	// Writer pool: single connection serialises all writes.
+	// No _txlock=immediate — not needed with one connection.
+	// Short busy timeout: with one writer it should almost never trigger.
+	writerDSN := baseDSN + "&_busy_timeout=10000"
+	writer, err := sql.Open("sqlite", writerDSN)
 	if err != nil {
-		return nil, fmt.Errorf("opening sqlite: %w", err)
+		return nil, fmt.Errorf("opening sqlite writer: %w", err)
 	}
+	writer.SetMaxOpenConns(1)
+	writer.SetMaxIdleConns(1)
 
-	// One connection = one writer at a time. No lock contention.
-	sqlDB.SetMaxOpenConns(1)
-	sqlDB.SetMaxIdleConns(1)
-
-	if err := sqlDB.Ping(); err != nil {
+	if err := writer.Ping(); err != nil {
 		return nil, fmt.Errorf("pinging sqlite: %w", err)
 	}
 
-	if err := runMigrations(sqlDB); err != nil {
+	if err := runMigrations(writer); err != nil {
 		return nil, fmt.Errorf("running migrations: %w", err)
 	}
 
-	return &DB{sql: sqlDB}, nil
+	// Reader pool: multiple connections for concurrent SELECTs.
+	// WAL mode means readers never see partial writes and never block the writer.
+	readerDSN := baseDSN + "&_busy_timeout=5000&mode=ro"
+	reader, err := sql.Open("sqlite", readerDSN)
+	if err != nil {
+		return nil, fmt.Errorf("opening sqlite reader: %w", err)
+	}
+	reader.SetMaxOpenConns(8)
+	reader.SetMaxIdleConns(4)
+
+	if err := reader.Ping(); err != nil {
+		return nil, fmt.Errorf("pinging sqlite reader: %w", err)
+	}
+
+	return &DB{sql: writer, reader: reader}, nil
 }
 
-// Close closes the underlying database connection.
-func (d *DB) Close() error { return d.sql.Close() }
+// Close closes both database connections.
+func (d *DB) Close() error {
+	_ = d.reader.Close()
+	return d.sql.Close()
+}
 
-// SQL returns the underlying *sql.DB for complex queries.
+// SQL returns the writer *sql.DB for complex write queries and transactions.
 func (d *DB) SQL() *sql.DB { return d.sql }
+
+// ReadSQL returns the reader *sql.DB for complex SELECT queries.
+func (d *DB) ReadSQL() *sql.DB { return d.reader }
 
 // Ping checks the database is reachable.
 func (d *DB) Ping() error { return d.sql.Ping() }
