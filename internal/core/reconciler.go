@@ -24,6 +24,7 @@ import (
 //     (e.g. after a container restart)
 //   - Samples per-peer metrics into metric_snapshots
 //   - Prunes old metric rows beyond the retention window
+//
 // AgentPusher is the interface for pushing peer changes to remote agents.
 type AgentPusher interface {
 	SendPeerAdd(agentIDs []string, peer interface{})
@@ -33,11 +34,12 @@ type AgentPusher interface {
 
 // AgentPeer mirrors agent.PeerConfig — defined here to avoid import cycles.
 type AgentPeer struct {
-	PublicKey  string   `json:"public_key"`
-	AssignedIP string   `json:"assigned_ip"`
-	AllowedIPs []string `json:"allowed_ips"`
-	DeviceID   string   `json:"device_id"`
-	DeviceName string   `json:"device_name,omitempty"`
+	PublicKey  string    `json:"public_key"`
+	AssignedIP string    `json:"assigned_ip"`
+	AllowedIPs []string  `json:"allowed_ips"`
+	DeviceID   string    `json:"device_id"`
+	DeviceName string    `json:"device_name,omitempty"`
+	ExpiresAt  time.Time `json:"expires_at,omitempty"`
 }
 
 type Reconciler struct {
@@ -57,11 +59,11 @@ type Reconciler struct {
 func NewReconciler(database *db.DB, peers wireguard.PeerManager, svc *Service, retainMetrics time.Duration, log *zap.Logger) *Reconciler {
 	return &Reconciler{
 		trigger: make(chan struct{}, 1),
-		db:     database,
-		peers:  peers,
-		svc:    svc,
-		log:    log,
-		retain: retainMetrics,
+		db:      database,
+		peers:   peers,
+		svc:     svc,
+		log:     log,
+		retain:  retainMetrics,
 	}
 }
 
@@ -236,8 +238,16 @@ func (r *Reconciler) removeExpiredPeers(ctx context.Context) {
 			if dev, err := r.db.GetDeviceByID(ctx, p.deviceID); err == nil {
 				if agentIDs := r.getGroupAgentIDs(ctx, dev.GroupID); len(agentIDs) > 0 {
 					r.agentHub.SendPeerRemove(agentIDs, p.publicKey, p.deviceID)
+					continue // agent handles WireGuard; skip local remove
 				}
 			}
+		}
+		// Local WireGuard remove for non-agent groups
+		if err := r.peers.RemovePeer(p.publicKey); err != nil {
+			r.log.Warn("reconciler: removing expired peer from local WG",
+				zap.String("device", p.deviceID),
+				zap.Error(err),
+			)
 		}
 	}
 }
@@ -259,7 +269,10 @@ func (r *Reconciler) ensureActivePeers(ctx context.Context) {
 
 	// Find devices with active sessions.
 	rows, err := r.db.SQL().QueryContext(ctx, `
-		SELECT d.id, d.public_key, d.assigned_ip, d.name, u.email
+		SELECT d.id, d.public_key, d.assigned_ip, d.name, u.email,
+		       (SELECT s.expires_at FROM sessions s
+		        WHERE s.device_id = d.id AND s.status = 'active'
+		        AND s.expires_at > ? ORDER BY s.expires_at DESC LIMIT 1) AS expires_at
 		FROM devices d
 		JOIN users u ON u.id = d.user_id
 		WHERE d.is_approved = 1
@@ -281,8 +294,9 @@ func (r *Reconciler) ensureActivePeers(ctx context.Context) {
 		var (
 			deviceID, publicKey, assignedIP string
 			name, email                     string
+			expiresAt                       time.Time
 		)
-		if err := rows.Scan(&deviceID, &publicKey, &assignedIP, &name, &email); err != nil {
+		if err := rows.Scan(&deviceID, &publicKey, &assignedIP, &name, &email, &expiresAt); err != nil {
 			r.log.Error("reconciler: scanning active peer row", zap.Error(err))
 			continue
 		}
@@ -290,6 +304,23 @@ func (r *Reconciler) ensureActivePeers(ctx context.Context) {
 		// Already present — nothing to do.
 		if inWG[publicKey] {
 			continue
+		}
+
+		// Skip local WireGuard management for agent-managed groups.
+		// The agent is the WireGuard server for those devices.
+		if devFull, err := r.db.GetDeviceByID(ctx, deviceID); err == nil {
+			if agents, err := r.db.GetGroupAgents(ctx, devFull.GroupID); err == nil {
+				agentManaged := false
+				for _, a := range agents {
+					if a.IsActive {
+						agentManaged = true
+						break
+					}
+				}
+				if agentManaged {
+					continue
+				}
+			}
 		}
 
 		// Missing from WireGuard — rebuild peer config and re-add.
@@ -339,6 +370,7 @@ func (r *Reconciler) ensureActivePeers(ctx context.Context) {
 						AllowedIPs: allowedIPs,
 						DeviceID:   deviceID,
 						DeviceName: dev.Name,
+						ExpiresAt:  expiresAt,
 					})
 				}
 			}

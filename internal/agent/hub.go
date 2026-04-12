@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -31,8 +32,8 @@ type EventEmitter func(eventType, agentID string)
 // Hub manages all connected agent WebSocket connections.
 // It is the server-side counterpart to the agent binary.
 type Hub struct {
-	log     *zap.Logger
-	db      *db.DB
+	log       *zap.Logger
+	db        *db.DB
 	emitEvent EventEmitter // optional: emit events to admin WS clients
 
 	mu     sync.RWMutex
@@ -155,9 +156,9 @@ func (h *Hub) HandleConnect(w http.ResponseWriter, r *http.Request, agentID stri
 		delete(h.agents, agentID)
 		h.mu.Unlock()
 		h.log.Info("agent disconnected", zap.String("agent", a.Name))
-	if h.emitEvent != nil {
-		h.emitEvent("agent.disconnected", agentID)
-	}
+		if h.emitEvent != nil {
+			h.emitEvent("agent.disconnected", agentID)
+		}
 	}()
 
 	h.serveAgent(r.Context(), ca)
@@ -236,8 +237,36 @@ func (h *Hub) handleAgentMessage(ca *ConnectedAgent, msg Envelope) {
 		h.log.Debug("agent ack", zap.String("agent", ca.Name), zap.String("msg_id", msg.MsgID))
 	case MsgStatus:
 		h.log.Debug("agent status", zap.String("agent", ca.Name))
+		var payload StatusPayload
+		if raw, err := json.Marshal(msg.Payload); err == nil {
+			if err := json.Unmarshal(raw, &payload); err == nil {
+				go h.writeAgentMetrics(ca.ID, payload)
+			}
+		}
 	case MsgError:
 		h.log.Warn("agent reported error", zap.String("agent", ca.Name))
+	}
+}
+
+// writeAgentMetrics writes per-peer WireGuard stats from an agent status report.
+func (h *Hub) writeAgentMetrics(_ string, payload StatusPayload) {
+	ctx := context.Background()
+	for _, ps := range payload.PeerStats {
+		dev, err := h.db.GetDeviceByPublicKey(ctx, ps.PublicKey)
+		if err != nil {
+			continue // unknown peer — skip
+		}
+		snap := &db.MetricSnapshot{
+			DeviceID:      dev.ID,
+			BytesSent:     ps.BytesSent,
+			BytesReceived: ps.BytesReceived,
+		}
+		if !ps.LastHandshake.IsZero() {
+			snap.LastHandshake = sql.NullTime{Time: ps.LastHandshake, Valid: true}
+		}
+		if err := h.db.InsertMetricSnapshot(ctx, snap); err != nil {
+			h.log.Warn("writing agent metric snapshot", zap.Error(err))
+		}
 	}
 }
 
@@ -295,21 +324,18 @@ func BuildSyncPayload(ctx context.Context, database *db.DB, agentID, wgInterface
 				AllowedIPs: allowedIPs,
 				DeviceID:   dev.ID,
 				DeviceName: dev.Name,
+				ExpiresAt:  s.ExpiresAt,
 			})
 		}
 	}
 
-	// Compute interface address: first usable IP in pool (e.g. 10.1.0.0/24 → 10.1.0.1/24)
+	// Compute interface address: last usable IP in pool (broadcast - 1).
+	// e.g. 10.100.36.0/27 → 10.100.36.30/27
 	interfaceAddr := ""
 	if vpnPool != "" {
-		if ip, ipNet, err := net.ParseCIDR(vpnPool); err == nil {
-			_ = ip
-			// Use .1 of the network
-			networkIP := ipNet.IP.To4()
-			if networkIP != nil {
-				ifIP := make(net.IP, 4)
-				copy(ifIP, networkIP)
-				ifIP[3] = 1
+		if _, ipNet, err := net.ParseCIDR(vpnPool); err == nil {
+			ifIP := lastUsableIP(ipNet)
+			if ifIP != nil {
 				ones, _ := ipNet.Mask.Size()
 				interfaceAddr = fmt.Sprintf("%s/%d", ifIP.String(), ones)
 			}
@@ -323,6 +349,33 @@ func BuildSyncPayload(ctx context.Context, database *db.DB, agentID, wgInterface
 		PrivateKey:       privateKey,
 		InterfaceAddress: interfaceAddr,
 	}, nil
+}
+
+// broadcastIP and lastUsableIP are IP helpers used for agent interface addressing.
+func broadcastIP(n *net.IPNet) net.IP {
+	ip := n.IP.To4()
+	if ip == nil {
+		return n.IP
+	}
+	bcast := make(net.IP, 4)
+	for i := 0; i < 4; i++ {
+		bcast[i] = ip[i] | ^n.Mask[i]
+	}
+	return bcast
+}
+
+func lastUsableIP(n *net.IPNet) net.IP {
+	bcast := broadcastIP(n)
+	clone := make(net.IP, len(bcast))
+	copy(clone, bcast)
+	// decrement
+	for i := len(clone) - 1; i >= 0; i-- {
+		clone[i]--
+		if clone[i] != 0xFF {
+			break
+		}
+	}
+	return clone
 }
 
 func getAgentGroups(ctx context.Context, database *db.DB, agentID string) ([]*db.Group, error) {

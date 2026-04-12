@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -152,6 +153,79 @@ func runLoop(ctx context.Context, privKey string) {
 	}
 }
 
+// expiryTracker manages per-peer expiry timers.
+// When a session expires, the peer is automatically removed from WireGuard.
+type expiryTracker struct {
+	mu     sync.Mutex
+	timers map[string]*time.Timer // publicKey -> timer
+	pm     wireguard.PeerManager
+}
+
+func newExpiryTracker(pm wireguard.PeerManager) *expiryTracker {
+	return &expiryTracker{
+		timers: make(map[string]*time.Timer),
+		pm:     pm,
+	}
+}
+
+// set schedules removal of publicKey at expiresAt.
+// If expiresAt is zero, no timer is set (unlimited session).
+// Cancels any existing timer for the same key first.
+func (t *expiryTracker) set(publicKey string, expiresAt time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	// Cancel existing timer for this peer
+	if existing, ok := t.timers[publicKey]; ok {
+		existing.Stop()
+		delete(t.timers, publicKey)
+	}
+
+	if expiresAt.IsZero() {
+		return // no expiry
+	}
+
+	delay := time.Until(expiresAt)
+	if delay <= 0 {
+		// Already expired — remove immediately
+		log.Printf("[expiry] peer %s already expired, removing", publicKey[:8])
+		_ = t.pm.RemovePeer(publicKey)
+		return
+	}
+
+	log.Printf("[expiry] peer %s expires in %s", publicKey[:8], delay.Round(time.Second))
+	timer := time.AfterFunc(delay, func() {
+		log.Printf("[expiry] session expired for peer %s, removing", publicKey[:8])
+		if err := t.pm.RemovePeer(publicKey); err != nil {
+			log.Printf("[expiry] failed to remove peer %s: %v", publicKey[:8], err)
+		}
+		t.mu.Lock()
+		delete(t.timers, publicKey)
+		t.mu.Unlock()
+	})
+	t.timers[publicKey] = timer
+}
+
+// cancel stops the expiry timer for publicKey (called on explicit peer.remove).
+func (t *expiryTracker) cancel(publicKey string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if timer, ok := t.timers[publicKey]; ok {
+		timer.Stop()
+		delete(t.timers, publicKey)
+	}
+}
+
+// cancelAll stops all timers (called on disconnect).
+func (t *expiryTracker) cancelAll() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for k, timer := range t.timers {
+		timer.Stop()
+		delete(t.timers, k)
+	}
+}
+
 func connect(ctx context.Context, privKey string) error {
 	// serverURL is the full WebSocket URL including path
 	wsURL := *serverURL
@@ -200,19 +274,68 @@ func connect(ctx context.Context, privKey string) error {
 		return fmt.Errorf("configuring WireGuard: %w", err)
 	}
 
-	// Message loop
-	for {
-		var env agent.Envelope
-		if err := wsjson.Read(ctx, conn, &env); err != nil {
-			return fmt.Errorf("reading message: %w", err)
+	expiry := newExpiryTracker(pm)
+	defer expiry.cancelAll()
+
+	// Send stats every 30s alongside the server's ping
+	statsTicker := time.NewTicker(30 * time.Second)
+	defer statsTicker.Stop()
+
+	// Message loop — multiplexed with stats ticker
+	readCh := make(chan agent.Envelope, 8)
+	errCh := make(chan error, 1)
+	go func() {
+		for {
+			var env agent.Envelope
+			if err := wsjson.Read(ctx, conn, &env); err != nil {
+				errCh <- err
+				return
+			}
+			readCh <- env
 		}
-		if err := handleMessage(ctx, conn, pm, env); err != nil {
-			log.Printf("Error handling %s: %v", env.Type, err)
+	}()
+
+	for {
+		select {
+		case env := <-readCh:
+			if err := handleMessage(ctx, conn, pm, expiry, env); err != nil {
+				log.Printf("Error handling %s: %v", env.Type, err)
+			}
+		case err := <-errCh:
+			return fmt.Errorf("reading message: %w", err)
+		case <-statsTicker.C:
+			sendStats(ctx, conn, pm)
 		}
 	}
 }
 
-func handleMessage(ctx context.Context, conn *websocket.Conn, pm wireguard.PeerManager, env agent.Envelope) error {
+// sendStats reads WireGuard peer stats and sends them to the server.
+func sendStats(ctx context.Context, conn *websocket.Conn, pm wireguard.PeerManager) {
+	stats, err := pm.GetStats()
+	if err != nil {
+		log.Printf("getting WireGuard stats: %v", err)
+		return
+	}
+	peerStats := make([]agent.PeerStats, 0, len(stats))
+	for _, s := range stats {
+		peerStats = append(peerStats, agent.PeerStats{
+			PublicKey:     s.PublicKey,
+			BytesSent:     s.BytesSent,
+			BytesReceived: s.BytesReceived,
+			LastHandshake: s.LastHandshake,
+		})
+	}
+	_ = wsjson.Write(ctx, conn, agent.Envelope{
+		Type: agent.MsgStatus,
+		Payload: agent.StatusPayload{
+			PeerCount:  len(peerStats),
+			ReportedAt: time.Now(),
+			PeerStats:  peerStats,
+		},
+	})
+}
+
+func handleMessage(ctx context.Context, conn *websocket.Conn, pm wireguard.PeerManager, expiry *expiryTracker, env agent.Envelope) error {
 	switch env.Type {
 	case agent.MsgSync:
 		payload, err := decodePayload[agent.SyncPayload](env.Payload)
@@ -220,15 +343,23 @@ func handleMessage(ctx context.Context, conn *websocket.Conn, pm wireguard.PeerM
 			return fmt.Errorf("decoding sync: %w", err)
 		}
 		log.Printf("Sync received: %d peers", len(payload.Peers))
-		return applySync(pm, payload)
+		// Register expiry timers for all peers in the sync
+		for _, p := range payload.Peers {
+			expiry.set(p.PublicKey, p.ExpiresAt)
+		}
+		return applySync(pm, expiry, payload)
 
 	case agent.MsgPeerAdd:
 		payload, err := decodePayload[agent.PeerConfig](env.Payload)
 		if err != nil {
 			return fmt.Errorf("decoding peer.add: %w", err)
 		}
-		log.Printf("Adding peer: %s (%s)", payload.DeviceName, payload.AssignedIP)
+		log.Printf("Adding peer: %s (%s) expires: %s", payload.DeviceName, payload.AssignedIP,
+			payload.ExpiresAt.Format(time.RFC3339))
 		opErr := addPeer(pm, payload)
+		if opErr == nil {
+			expiry.set(payload.PublicKey, payload.ExpiresAt)
+		}
 		return sendAck(ctx, conn, env.MsgID, opErr)
 
 	case agent.MsgPeerRemove:
@@ -237,6 +368,7 @@ func handleMessage(ctx context.Context, conn *websocket.Conn, pm wireguard.PeerM
 			return fmt.Errorf("decoding peer.remove: %w", err)
 		}
 		log.Printf("Removing peer: %s (device %s)", payload.PublicKey[:8], payload.DeviceID[:8])
+		expiry.cancel(payload.PublicKey) // cancel timer — server is handling removal
 		opErr := pm.RemovePeer(payload.PublicKey)
 		return sendAck(ctx, conn, env.MsgID, opErr)
 
@@ -247,7 +379,7 @@ func handleMessage(ctx context.Context, conn *websocket.Conn, pm wireguard.PeerM
 }
 
 // applySync reconciles the full peer list from Wicket.
-func applySync(pm wireguard.PeerManager, payload agent.SyncPayload) error {
+func applySync(pm wireguard.PeerManager, expiry *expiryTracker, payload agent.SyncPayload) error {
 	// Set the interface IP address if provided in the sync payload.
 	// This ensures the agent's WireGuard interface has the correct address
 	// (the .1 of its VPN pool) for routing to work.
@@ -281,6 +413,7 @@ func applySync(pm wireguard.PeerManager, payload agent.SyncPayload) error {
 	for key := range current {
 		if !desired[key] {
 			log.Printf("Removing stale peer: %s...", key[:8])
+			expiry.cancel(key) // cancel any local timer — peer is gone
 			if err := pm.RemovePeer(key); err != nil {
 				log.Printf("Failed to remove peer: %v", err)
 			}

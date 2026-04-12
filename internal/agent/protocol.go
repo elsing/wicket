@@ -30,17 +30,18 @@ type Envelope struct {
 
 // PeerConfig describes a WireGuard peer to be added/updated.
 type PeerConfig struct {
-	PublicKey   string   `json:"public_key"`
-	AssignedIP  string   `json:"assigned_ip"` // /32 host route
-	AllowedIPs  []string `json:"allowed_ips"` // what the peer can route
-	DeviceID    string   `json:"device_id"`
-	DeviceName  string   `json:"device_name,omitempty"`
+	PublicKey  string    `json:"public_key"`
+	AssignedIP string    `json:"assigned_ip"` // /32 host route
+	AllowedIPs []string  `json:"allowed_ips"` // what the peer can route
+	DeviceID   string    `json:"device_id"`
+	DeviceName string    `json:"device_name,omitempty"`
+	ExpiresAt  time.Time `json:"expires_at,omitempty"` // zero = no expiry (e.g. server-local peers)
 }
 
 // SyncPayload is sent on connect with the full peer list.
 type SyncPayload struct {
 	Peers            []PeerConfig `json:"peers"`
-	Interface        string       `json:"interface"`         // WireGuard interface name
+	Interface        string       `json:"interface"` // WireGuard interface name
 	ListenPort       int          `json:"listen_port"`
 	PrivateKey       string       `json:"private_key"`       // agent's WireGuard private key
 	InterfaceAddress string       `json:"interface_address"` // CIDR for the WG interface e.g. 10.1.0.1/24
@@ -67,8 +68,17 @@ type AckPayload struct {
 	Error   string `json:"error,omitempty"`
 }
 
-// StatusPayload is sent periodically by agents.
+// PeerStats carries per-peer WireGuard stats from the agent to the server.
+type PeerStats struct {
+	PublicKey     string    `json:"public_key"`
+	BytesSent     int64     `json:"bytes_sent"`
+	BytesReceived int64     `json:"bytes_received"`
+	LastHandshake time.Time `json:"last_handshake,omitempty"`
+}
+
+// StatusPayload is sent periodically by agents with live WireGuard stats.
 type StatusPayload struct {
-	PeerCount  int       `json:"peer_count"`
-	ReportedAt time.Time `json:"reported_at"`
+	PeerCount  int         `json:"peer_count"`
+	ReportedAt time.Time   `json:"reported_at"`
+	PeerStats  []PeerStats `json:"peer_stats,omitempty"`
 }
