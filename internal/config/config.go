@@ -263,7 +263,7 @@ func defaults() *Config {
 			Environment: "production",
 		},
 		DB: DBConfig{
-			Path: "/data/wicket.db",
+			DSN: "postgres://wicket:yourpassword@localhost:5432/wicket?sslmode=disable",
 		},
 		WireGuard: WireGuardConfig{
 			Interface:  "wg1", // default to wg1 to avoid conflict with existing wg0
