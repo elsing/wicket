@@ -170,6 +170,16 @@ function fmtRate(bps) {
 }
 
 // ── Group edit toggle ─────────────────────────────────────────────────────────
+// Reset create group form after successful submission
+document.body.addEventListener('resetGroupForm', function() {
+  const form = document.querySelector('form[hx-post="/groups"]');
+  if (form) {
+    form.reset();
+    const errDiv = document.getElementById('group-form-error');
+    if (errDiv) errDiv.innerHTML = '';
+  }
+});
+
 // Event delegation for data-attribute based toggles (templ-safe approach)
 document.addEventListener('click', function(e) {
   const groupEl = e.target.closest('[data-toggle-group-edit]');

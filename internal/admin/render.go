@@ -43,7 +43,9 @@ func renderAdminUsers(w http.ResponseWriter, r *http.Request, data AdminUsersDat
 func renderAdminGroups(w http.ResponseWriter, r *http.Request, data AdminGroupsData) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// For HTMX requests targeting the groups list, return only the fragment
+	// and trigger a form reset so the create form clears.
 	if r.Header.Get("HX-Request") == "true" {
+		w.Header().Set("HX-Trigger", `{"resetGroupForm": true}`)
 		GroupsList(data).Render(r.Context(), w) //nolint:errcheck
 		return
 	}

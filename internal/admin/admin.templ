@@ -774,7 +774,7 @@ templ AdminAgentsPage(data AdminAgentsData) {
 		<div class="page-header">
 			<p class="page-desc">Remote WireGuard agents. Each agent manages a WireGuard interface on a remote server and receives peer updates from Wicket.</p>
 		</div>
-		<div id="agents-content">
+		<div id="agents-content" hx-get="/agents/list" hx-trigger="refresh from:body" hx-swap="innerHTML">
 			@AgentsList(data)
 		</div>
 	}

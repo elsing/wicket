@@ -628,7 +628,6 @@ func scanSession(row *sql.Row) (*Session, error) {
 	return &s, err
 }
 
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Agents
 // ─────────────────────────────────────────────────────────────────────────────
@@ -659,13 +658,13 @@ func (d *DB) ListAgents(ctx context.Context) ([]*Agent, error) {
 	return agents, rows.Err()
 }
 
-func (d *DB) CreateAgent(ctx context.Context, name, description, tokenHash string) (*Agent, error) {
+func (d *DB) CreateAgent(ctx context.Context, name, description, tokenHash, vpnPool, endpoint string) (*Agent, error) {
 	id := newID()
 	now := time.Now().UTC()
 	_, err := d.sql.ExecContext(ctx,
 		`INSERT INTO agents (id, name, description, token, vpn_pool, endpoint, is_active, created_at)
-		 VALUES (?, ?, ?, ?, '', '', 1, ?)`,
-		id, name, description, tokenHash, now,
+		 VALUES (?, ?, ?, ?, ?, ?, 1, ?)`,
+		id, name, description, tokenHash, vpnPool, endpoint, now,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("creating agent: %w", err)

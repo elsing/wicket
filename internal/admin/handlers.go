@@ -50,15 +50,13 @@ func (h *Handler) serverError(w http.ResponseWriter, msg string, err error) {
 	http.Error(w, msg+": "+err.Error(), http.StatusInternalServerError)
 }
 
-// formError returns a user-visible inline error using HTMX response headers
-// to retarget the swap to the form's error div rather than the success target.
-// The form must have a sibling <div id="<formID>-error"> element.
+// formError returns an error banner targeted at a specific div ID using
+// HX-Retarget. The error div must exist in the DOM before the request fires.
 func formError(w http.ResponseWriter, errorDivID, msg string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("HX-Retarget", "#"+errorDivID)
 	w.Header().Set("HX-Reswap", "innerHTML")
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `<p style="color:var(--error-text);font-size:13px;margin:8px 0">⚠ %s</p>`, msg)
+	fmt.Fprintf(w, `<div class="alert" style="background:var(--error-bg,#fee2e2);color:var(--error-text,#b91c1c);border-radius:6px;padding:10px 14px;font-size:13px">⚠ %s</div>`, msg)
 }
 
 // isUniqueViolation reports whether err is a SQLite unique constraint failure.
@@ -165,6 +163,7 @@ func NewHandler(
 		r.Delete("/routes/{routeID}", h.handleDeleteRoute)
 
 		r.Get("/agents", h.handleAgents)
+		r.Get("/agents/list", h.handleAgentsList)
 		r.Post("/agents", h.handleCreateAgent)
 		r.Delete("/agents/{agentID}", h.handleRevokeAgent)
 
@@ -691,6 +690,25 @@ func (h *Handler) handleDeleteRoute(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+func (h *Handler) handleAgentsList(w http.ResponseWriter, r *http.Request) {
+	agents, _ := h.svc.DB().ListAgents(r.Context())
+	counts := h.hub.ConnectedCount()
+	if h.agentHub != nil {
+		connectedIDs := make(map[string]bool)
+		for _, id := range h.agentHub.ConnectedIDs() {
+			connectedIDs[id] = true
+		}
+		for _, a := range agents {
+			a.Connected = connectedIDs[a.ID]
+		}
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	AgentsList(AdminAgentsData{
+		Agents:         agents,
+		ConnectedCount: counts[ws.KindAgent],
+	}).Render(r.Context(), w) //nolint:errcheck
+}
+
 func (h *Handler) handleAgents(w http.ResponseWriter, r *http.Request) {
 	sess := portal.SessionFromContext(r.Context())
 	agents, _ := h.svc.DB().ListAgents(r.Context())
@@ -726,7 +744,7 @@ func (h *Handler) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	agent, err := h.svc.DB().CreateAgent(r.Context(), name, r.FormValue("description"), hash)
+	agent, err := h.svc.DB().CreateAgent(r.Context(), name, r.FormValue("description"), hash, r.FormValue("vpn_pool"), r.FormValue("endpoint"))
 	if err != nil {
 		if isUniqueViolation(err) {
 			formError(w, "agent-form-error", "An agent named "+name+" already exists.")
