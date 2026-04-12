@@ -170,6 +170,11 @@ function fmtRate(bps) {
 }
 
 // ── Group edit toggle ─────────────────────────────────────────────────────────
+// Refresh agents list when a new agent is created
+document.body.addEventListener('refreshAgentsList', function() {
+  htmx.ajax('GET', '/agents/list', {target: '#agents-content', swap: 'innerHTML'});
+});
+
 // Reset create group form after successful submission
 document.body.addEventListener('resetGroupForm', function() {
   const form = document.querySelector('form[hx-post="/groups"]');
@@ -185,7 +190,7 @@ document.addEventListener('click', function(e) {
   const groupEl = e.target.closest('[data-toggle-group-edit]');
   if (groupEl) { window.toggleGroupEdit(groupEl.dataset.toggleGroupEdit); return; }
   const agentEl = e.target.closest('[data-toggle-agent-edit]');
-  if (agentEl) { window.toggleAgentEdit(agentEl.dataset.toggleAgentEdit || agentEl.closest('[id^="agent-"]')?.id?.replace('agent-','')); return; }
+  if (agentEl) { window.toggleAgentEdit(agentEl.dataset.toggleAgentEdit); return; }
 });
 
 window.toggleAgentEdit = function(agentID) {

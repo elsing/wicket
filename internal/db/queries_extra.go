@@ -59,6 +59,13 @@ func (d *DB) DeactivateAgent(ctx context.Context, id string) error {
 	return err
 }
 
+// DeleteAgent permanently removes an agent and its group assignments.
+// Only call on revoked (is_active=0) agents.
+func (d *DB) DeleteAgent(ctx context.Context, id string) error {
+	_, err := d.sql.ExecContext(ctx, `DELETE FROM agents WHERE id = ? AND is_active = 0`, id)
+	return err
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Local admin accounts (fallback when OIDC is unavailable)
 // ─────────────────────────────────────────────────────────────────────────────

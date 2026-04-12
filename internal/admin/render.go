@@ -71,8 +71,17 @@ func renderAdminRoutes(w http.ResponseWriter, r *http.Request, data AdminRoutesD
 	AdminRoutesPage(data).Render(r.Context(), w) //nolint:errcheck
 }
 
+func renderAgentCard(w http.ResponseWriter, r *http.Request, a *db.Agent, data AdminAgentsData) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	AgentCard(a, data).Render(r.Context(), w) //nolint:errcheck
+}
+
 func renderAdminAgents(w http.ResponseWriter, r *http.Request, data AdminAgentsData) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if r.Header.Get("HX-Request") == "true" {
+		AgentsList(data).Render(r.Context(), w) //nolint:errcheck
+		return
+	}
 	AdminAgentsPage(data).Render(r.Context(), w) //nolint:errcheck
 }
 

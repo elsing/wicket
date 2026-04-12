@@ -780,94 +780,99 @@ templ AdminAgentsPage(data AdminAgentsData) {
 	}
 }
 
+// AgentCard renders a single agent card for HTMX outerHTML swaps.
+templ AgentCard(a *db.Agent, data AdminAgentsData) {
+		<div class="card" id={ "agent-" + a.ID } style="padding:20px 24px;margin-bottom:12px">
+			<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:10px">
+				<div style="flex:1">
+					<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+						<span style="font-weight:600;font-size:15px">{ a.Name }</span>
+						if a.Connected {
+							<span class="badge badge-success">● Connected</span>
+						} else if a.IsActive {
+							<span class="badge badge-warning">Registered</span>
+						} else {
+							<span class="badge badge-muted">Revoked</span>
+						}
+					</div>
+					if a.Description != "" {
+						<div style="font-size:12px;color:var(--text-2);margin-top:3px">{ a.Description }</div>
+					}
+					<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--text-2);margin-top:6px">
+						if a.VPNPool != "" {
+							<span>🏊 { a.VPNPool }</span>
+						} else {
+							<span style="color:var(--warning-text)">⚠ No VPN pool set</span>
+						}
+						if a.Endpoint != "" {
+							<span>📡 { a.Endpoint }</span>
+						} else {
+							<span style="color:var(--warning-text)">⚠ No endpoint set</span>
+						}
+						if a.WGPublicKey != "" {
+							<span title={ a.WGPublicKey }>🔑 { a.WGPublicKey[:8] }…</span>
+						} else {
+							<span style="color:var(--warning-text)">⚠ No WG key (agent not yet connected)</span>
+						}
+						if a.LastSeenAt.Valid {
+							<span>Last seen { a.LastSeenAt.Time.Format("02 Jan 15:04") }</span>
+						} else {
+							<span>Never connected</span>
+						}
+					</div>
+				</div>
+				<div style="display:flex;gap:8px;flex-shrink:0">
+					if a.IsActive {
+						<button class="btn btn-sm btn-outline"
+							data-agent-id={ a.ID }
+							data-toggle-agent-edit="true">
+							Edit
+						</button>
+						<button class="btn btn-sm btn-ghost" style="color:var(--error-text)"
+							hx-delete={ "/agents/" + a.ID }
+							hx-target={ "#agent-" + a.ID } hx-swap="delete"
+							hx-confirm="Revoke this agent? This will disconnect any devices using it.">
+							Revoke
+						</button>
+					}
+				</div>
+			</div>
+			<div id={ "agent-edit-" + a.ID } style="display:none;background:var(--bg-2);border-radius:8px;padding:14px;margin-top:10px">
+				<form hx-put={ "/agents/" + a.ID }
+					hx-target={ "#agent-" + a.ID } hx-swap="outerHTML"
+					style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+					<div>
+						<label style="font-size:12px;font-weight:500;color:var(--text-2);display:block;margin-bottom:4px">Name</label>
+						<input type="text" name="name" class="input" value={ a.Name } required/>
+					</div>
+					<div>
+						<label style="font-size:12px;font-weight:500;color:var(--text-2);display:block;margin-bottom:4px">Description</label>
+						<input type="text" name="description" class="input" value={ a.Description }/>
+					</div>
+					<div>
+						<label style="font-size:12px;font-weight:500;color:var(--text-2);display:block;margin-bottom:4px">VPN Pool (CIDR)</label>
+						<input type="text" name="vpn_pool" class="input" value={ a.VPNPool } placeholder="10.1.0.0/24"/>
+					</div>
+					<div>
+						<label style="font-size:12px;font-weight:500;color:var(--text-2);display:block;margin-bottom:4px">Endpoint (host:port)</label>
+						<input type="text" name="endpoint" class="input" value={ a.Endpoint } placeholder="lon.vpn.example.com:51820"/>
+					</div>
+					<div style="grid-column:1/-1;display:flex;gap:8px">
+						<button type="submit" class="btn btn-sm btn-primary">Save</button>
+						<button type="button" class="btn btn-sm btn-ghost"
+							data-agent-id={ a.ID }
+							data-toggle-agent-edit="cancel">Cancel</button>
+					</div>
+				</form>
+			</div>
+		</div>
+}
+
 templ AgentsList(data AdminAgentsData) {
 	<div class="two-col">
 		<div>
 			for _, a := range data.Agents {
-				<div class="card" id={ "agent-" + a.ID } style="padding:20px 24px;margin-bottom:12px">
-					<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:10px">
-						<div style="flex:1">
-							<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-								<span style="font-weight:600;font-size:15px">{ a.Name }</span>
-								if a.Connected {
-									<span class="badge badge-success">● Connected</span>
-								} else if a.IsActive {
-									<span class="badge badge-warning">Registered</span>
-								} else {
-									<span class="badge badge-muted">Revoked</span>
-								}
-							</div>
-							if a.Description != "" {
-								<div style="font-size:12px;color:var(--text-2);margin-top:3px">{ a.Description }</div>
-							}
-							<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--text-2);margin-top:6px">
-								if a.VPNPool != "" {
-									<span>🏊 { a.VPNPool }</span>
-								} else {
-									<span style="color:var(--warning-text)">⚠ No VPN pool set</span>
-								}
-								if a.Endpoint != "" {
-									<span>📡 { a.Endpoint }</span>
-								} else {
-									<span style="color:var(--warning-text)">⚠ No endpoint set</span>
-								}
-								if a.WGPublicKey != "" {
-									<span title={ a.WGPublicKey }>🔑 { a.WGPublicKey[:8] }…</span>
-								} else {
-									<span style="color:var(--warning-text)">⚠ No WG key (agent not yet connected)</span>
-								}
-								if a.LastSeenAt.Valid {
-									<span>Last seen { a.LastSeenAt.Time.Format("02 Jan 15:04") }</span>
-								} else {
-									<span>Never connected</span>
-								}
-							</div>
-						</div>
-						<div style="display:flex;gap:8px;flex-shrink:0">
-							if a.IsActive {
-								<button class="btn btn-sm btn-outline"
-									data-agent-id={ a.ID }
-									data-toggle-agent-edit="true">
-									Edit
-								</button>
-								<button class="btn btn-sm btn-ghost" style="color:var(--error-text)"
-									hx-delete={ "/agents/" + a.ID }
-									hx-target={ "#agent-" + a.ID } hx-swap="delete"
-									hx-confirm="Revoke this agent? This will disconnect any devices using it.">
-									Revoke
-								</button>
-							}
-						</div>
-					</div>
-					<div id={ "agent-edit-" + a.ID } style="display:none;background:var(--bg-2);border-radius:8px;padding:14px;margin-top:10px">
-						<form hx-put={ "/agents/" + a.ID }
-							hx-target={ "#agent-" + a.ID } hx-swap="outerHTML"
-							style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-							<div>
-								<label style="font-size:12px;font-weight:500;color:var(--text-2);display:block;margin-bottom:4px">Name</label>
-								<input type="text" name="name" class="input" value={ a.Name } required/>
-							</div>
-							<div>
-								<label style="font-size:12px;font-weight:500;color:var(--text-2);display:block;margin-bottom:4px">Description</label>
-								<input type="text" name="description" class="input" value={ a.Description }/>
-							</div>
-							<div>
-								<label style="font-size:12px;font-weight:500;color:var(--text-2);display:block;margin-bottom:4px">VPN Pool (CIDR)</label>
-								<input type="text" name="vpn_pool" class="input" value={ a.VPNPool } placeholder="10.1.0.0/24"/>
-							</div>
-							<div>
-								<label style="font-size:12px;font-weight:500;color:var(--text-2);display:block;margin-bottom:4px">Endpoint (host:port)</label>
-								<input type="text" name="endpoint" class="input" value={ a.Endpoint } placeholder="lon.vpn.example.com:51820"/>
-							</div>
-							<div style="grid-column:1/-1;display:flex;gap:8px">
-								<button type="submit" class="btn btn-sm btn-primary">Save</button>
-								<button type="button" class="btn btn-sm btn-ghost"
-									data-agent-id={ a.ID }
-									data-toggle-agent-edit="cancel">Cancel</button>
-							</div>
-						</form>
-					</div>
-				</div>
+				@AgentCard(a, data)
 			}
 			if len(data.Agents) == 0 {
 				<div class="card" style="padding:24px;text-align:center;color:var(--text-2)">

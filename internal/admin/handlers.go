@@ -166,6 +166,7 @@ func NewHandler(
 		r.Get("/agents/list", h.handleAgentsList)
 		r.Post("/agents", h.handleCreateAgent)
 		r.Delete("/agents/{agentID}", h.handleRevokeAgent)
+		r.Delete("/agents/{agentID}/delete", h.handleDeleteAgent)
 
 		r.Get("/audit", h.handleAuditLog)
 		r.Get("/metrics", h.handleMetrics)
@@ -523,34 +524,39 @@ func (h *Handler) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		r.FormValue("vpn_pool"),
 		r.FormValue("endpoint"),
 	); err != nil {
-		h.serverError(w, "internal error", err)
+		h.serverError(w, "updating agent", err)
 		return
 	}
-	// Return updated agent card
-	if _, err := h.svc.DB().GetAgentByID(r.Context(), agentID); err != nil {
-		h.handleAgents(w, r)
+	// Return the updated agent card for outerHTML swap
+	a, err := h.svc.DB().GetAgentByID(r.Context(), agentID)
+	if err != nil {
+		h.serverError(w, "fetching updated agent", err)
 		return
 	}
-	h.handleAgents(w, r)
+	if h.agentHub != nil {
+		a.Connected = h.agentHub.IsConnected(agentID)
+	}
+	data := h.agentsData(r)
+	renderAgentCard(w, r, a, data)
 }
 
 func (h *Handler) handleAssignGroupAgent(w http.ResponseWriter, r *http.Request) {
 	groupID := chi.URLParam(r, "groupID")
 	if err := h.svc.DB().AssignAgentToGroup(r.Context(), groupID, r.FormValue("agent_id")); err != nil {
-		h.serverError(w, "internal error", err)
+		h.serverError(w, "assigning agent to group", err)
 		return
 	}
-	h.handleGroups(w, r)
+	renderGroupCard(w, r, h.groupsData(r), groupID)
 }
 
 func (h *Handler) handleRemoveGroupAgent(w http.ResponseWriter, r *http.Request) {
 	groupID := chi.URLParam(r, "groupID")
 	agentID := chi.URLParam(r, "agentID")
 	if err := h.svc.DB().RemoveAgentFromGroup(r.Context(), groupID, agentID); err != nil {
-		h.serverError(w, "internal error", err)
+		h.serverError(w, "removing agent from group", err)
 		return
 	}
-	h.handleGroups(w, r)
+	renderGroupCard(w, r, h.groupsData(r), groupID)
 }
 
 func (h *Handler) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
@@ -578,25 +584,42 @@ func (h *Handler) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := h.svc.DB().UpdateGroup(r.Context(), groupID, name, r.FormValue("description"), d, maxExt, r.FormValue("endpoint_override")); err != nil {
-		h.serverError(w, "internal error", err)
+		if isUniqueViolation(err) {
+			http.Error(w, "A group with that name already exists", http.StatusConflict)
+			return
+		}
+		h.serverError(w, "updating group", err)
 		return
 	}
-	h.handleGroups(w, r)
+	renderGroupCard(w, r, h.groupsData(r), groupID)
+}
+
+func (h *Handler) groupsData(r *http.Request) AdminGroupsData {
+	sess := portal.SessionFromContext(r.Context())
+	groups, _ := h.svc.ListAllGroups(r.Context())
+	routes, _ := h.svc.ListAllRoutes(r.Context())
+	agents, _ := h.svc.DB().ListAgents(r.Context())
+	groupRoutes, _ := h.svc.DB().ListGroupRoutes(r.Context())
+	groupAgents, _ := h.svc.DB().GetGroupAgentMap(r.Context())
+	deviceCounts, _ := h.svc.DB().DeviceCountPerGroup(r.Context())
+	agentsByID := make(map[string]*db.Agent, len(agents))
+	for _, a := range agents {
+		agentsByID[a.ID] = a
+	}
+	return AdminGroupsData{
+		Session:      sess,
+		Groups:       groups,
+		Routes:       routes,
+		Agents:       agents,
+		GroupRoutes:  groupRoutes,
+		GroupAgents:  groupAgents,
+		AgentsByID:   agentsByID,
+		DeviceCounts: deviceCounts,
+	}
 }
 
 func (h *Handler) handleGroups(w http.ResponseWriter, r *http.Request) {
-	sess := portal.SessionFromContext(r.Context())
-	groups, _ := h.svc.ListAllGroups(r.Context())
-	subnets, _ := h.svc.ListAllRoutes(r.Context())
-	groupRoutes, _ := h.svc.DB().ListGroupRoutes(r.Context())
-	deviceCounts, _ := h.svc.DB().DeviceCountPerGroup(r.Context())
-	renderAdminGroups(w, r, AdminGroupsData{
-		Session:      sess,
-		Groups:       groups,
-		Routes:       subnets,
-		GroupRoutes:  groupRoutes,
-		DeviceCounts: deviceCounts,
-	})
+	renderAdminGroups(w, r, h.groupsData(r))
 }
 
 func (h *Handler) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
@@ -709,12 +732,9 @@ func (h *Handler) handleAgentsList(w http.ResponseWriter, r *http.Request) {
 	}).Render(r.Context(), w) //nolint:errcheck
 }
 
-func (h *Handler) handleAgents(w http.ResponseWriter, r *http.Request) {
-	sess := portal.SessionFromContext(r.Context())
+func (h *Handler) agentsData(r *http.Request) AdminAgentsData {
 	agents, _ := h.svc.DB().ListAgents(r.Context())
 	counts := h.hub.ConnectedCount()
-
-	// Mark which agents are currently connected via the agent hub.
 	if h.agentHub != nil {
 		connectedIDs := make(map[string]bool)
 		for _, id := range h.agentHub.ConnectedIDs() {
@@ -724,8 +744,15 @@ func (h *Handler) handleAgents(w http.ResponseWriter, r *http.Request) {
 			a.Connected = connectedIDs[a.ID]
 		}
 	}
+	return AdminAgentsData{
+		Session:        portal.SessionFromContext(r.Context()),
+		Agents:         agents,
+		ConnectedCount: counts[ws.KindAgent],
+	}
+}
 
-	renderAdminAgents(w, r, AdminAgentsData{Session: sess, Agents: agents, ConnectedCount: counts[ws.KindAgent]})
+func (h *Handler) handleAgents(w http.ResponseWriter, r *http.Request) {
+	renderAdminAgents(w, r, h.agentsData(r))
 }
 
 func (h *Handler) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
@@ -753,6 +780,7 @@ func (h *Handler) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, "creating agent", err)
 		return
 	}
+	w.Header().Set("HX-Trigger", `{"refreshAgentsList": true}`)
 	renderAgentToken(w, r, agent, token)
 }
 
@@ -794,12 +822,24 @@ func (h *Handler) handleAgentConnect(w http.ResponseWriter, r *http.Request) {
 	h.agentHub.HandleConnect(w, r, agentRecord.ID, syncPayload)
 }
 
-func (h *Handler) handleRevokeAgent(w http.ResponseWriter, r *http.Request) {
-	if err := h.svc.DB().DeactivateAgent(r.Context(), chi.URLParam(r, "agentID")); err != nil {
-		h.serverError(w, "internal error", err)
+func (h *Handler) handleDeleteAgent(w http.ResponseWriter, r *http.Request) {
+	agentID := chi.URLParam(r, "agentID")
+	if err := h.svc.DB().DeleteAgent(r.Context(), agentID); err != nil {
+		h.serverError(w, "deleting agent", err)
 		return
 	}
+	// Return empty - the card will be deleted by hx-swap="delete"
 	w.WriteHeader(http.StatusOK)
+}
+
+func (h *Handler) handleRevokeAgent(w http.ResponseWriter, r *http.Request) {
+	agentID := chi.URLParam(r, "agentID")
+	if err := h.svc.DB().DeactivateAgent(r.Context(), agentID); err != nil {
+		h.serverError(w, "revoking agent", err)
+		return
+	}
+	// Return updated agent card showing revoked state with delete button
+	h.handleAgents(w, r)
 }
 
 func (h *Handler) handleAuditLog(w http.ResponseWriter, r *http.Request) {
