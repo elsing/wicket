@@ -24,12 +24,29 @@ import (
 //     (e.g. after a container restart)
 //   - Samples per-peer metrics into metric_snapshots
 //   - Prunes old metric rows beyond the retention window
+// AgentPusher is the interface for pushing peer changes to remote agents.
+type AgentPusher interface {
+	SendPeerAdd(agentIDs []string, peer interface{})
+	SendPeerRemove(agentIDs []string, publicKey, deviceID string)
+	ConnectedIDs() []string
+}
+
+// AgentPeer mirrors agent.PeerConfig — defined here to avoid import cycles.
+type AgentPeer struct {
+	PublicKey  string   `json:"public_key"`
+	AssignedIP string   `json:"assigned_ip"`
+	AllowedIPs []string `json:"allowed_ips"`
+	DeviceID   string   `json:"device_id"`
+	DeviceName string   `json:"device_name,omitempty"`
+}
+
 type Reconciler struct {
-	db     *db.DB
-	peers  wireguard.PeerManager
-	svc    *Service
-	log    *zap.Logger
-	retain time.Duration // metric retention window
+	db       *db.DB
+	peers    wireguard.PeerManager
+	svc      *Service
+	agentHub AgentPusher
+	log      *zap.Logger
+	retain   time.Duration
 
 	mu      sync.Mutex
 	lastRun time.Time
@@ -44,6 +61,11 @@ func NewReconciler(database *db.DB, peers wireguard.PeerManager, svc *Service, r
 		log:    log,
 		retain: retainMetrics,
 	}
+}
+
+// SetAgentHub wires the agent hub into the reconciler after construction.
+func (r *Reconciler) SetAgentHub(hub AgentPusher) {
+	r.agentHub = hub
 }
 
 // LastRun returns the time the most recent reconcile pass completed.
@@ -195,6 +217,15 @@ func (r *Reconciler) removeExpiredPeers(ctx context.Context) {
 		})
 
 		r.svc.emit(Event{Type: EventPeerRemoved, DeviceID: p.deviceID})
+
+		// Push removal to remote agents assigned to this device's group.
+		if r.agentHub != nil {
+			if dev, err := r.db.GetDeviceByID(ctx, p.deviceID); err == nil {
+				if agentIDs := r.getGroupAgentIDs(ctx, dev.GroupID); len(agentIDs) > 0 {
+					r.agentHub.SendPeerRemove(agentIDs, p.publicKey, p.deviceID)
+				}
+			}
+		}
 	}
 }
 
@@ -279,6 +310,26 @@ func (r *Reconciler) ensureActivePeers(ctx context.Context) {
 		})
 
 		r.svc.emit(Event{Type: EventPeerAdded, DeviceID: deviceID})
+
+		// Push addition to remote agents assigned to this device's group.
+		if r.agentHub != nil {
+			if dev, err := r.db.GetDeviceByID(ctx, deviceID); err == nil {
+				if agentIDs := r.getGroupAgentIDs(ctx, dev.GroupID); len(agentIDs) > 0 {
+					routes, _ := r.db.ListRoutesForDevice(ctx, deviceID)
+					allowedIPs := []string{assignedIP + "/32"}
+					for _, rt := range routes {
+						allowedIPs = append(allowedIPs, rt.CIDR)
+					}
+					r.agentHub.SendPeerAdd(agentIDs, AgentPeer{
+						PublicKey:  publicKey,
+						AssignedIP: assignedIP + "/32",
+						AllowedIPs: allowedIPs,
+						DeviceID:   deviceID,
+						DeviceName: dev.Name,
+					})
+				}
+			}
+		}
 	}
 
 	if err := rows.Err(); err != nil {
@@ -286,10 +337,19 @@ func (r *Reconciler) ensureActivePeers(ctx context.Context) {
 	}
 }
 
+// getGroupAgentIDs returns the agent IDs assigned to a group.
+func (r *Reconciler) getGroupAgentIDs(ctx context.Context, groupID string) []string {
+	groupAgentMap, err := r.db.GetGroupAgentMap(ctx)
+	if err != nil {
+		return nil
+	}
+	return groupAgentMap[groupID]
+}
+
 // buildPeerConfig constructs a wireguard.PeerConfig for a device.
 // Uses device-level subnet overrides if present, otherwise falls back to group subnets.
 func (r *Reconciler) buildPeerConfig(ctx context.Context, deviceID, publicKey, assignedIP string) (*wireguard.PeerConfig, error) {
-	subnets, err := r.db.ListSubnetsForDevice(ctx, deviceID)
+	subnets, err := r.db.ListRoutesForDevice(ctx, deviceID)
 	if err != nil {
 		return nil, fmt.Errorf("listing subnets: %w", err)
 	}

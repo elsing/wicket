@@ -18,31 +18,31 @@ func (d *DB) RemoveUserFromGroup(ctx context.Context, userID, groupID string) er
 	return err
 }
 
-func (d *DB) AddSubnetToGroup(ctx context.Context, groupID, subnetID string) error {
+func (d *DB) AddRouteToGroup(ctx context.Context, groupID, routeID string) error {
 	_, err := d.sql.ExecContext(ctx,
-		`INSERT OR IGNORE INTO group_subnets (id, group_id, subnet_id, created_at) VALUES (?, ?, ?, ?)`,
-		newID(), groupID, subnetID, time.Now().UTC())
+		`INSERT OR IGNORE INTO group_subnets (id, group_id, route_id, created_at) VALUES (?, ?, ?, ?)`,
+		newID(), groupID, routeID, time.Now().UTC())
 	return err
 }
 
-func (d *DB) RemoveSubnetFromGroup(ctx context.Context, groupID, subnetID string) error {
-	_, err := d.sql.ExecContext(ctx, `DELETE FROM group_subnets WHERE group_id = ? AND subnet_id = ?`, groupID, subnetID)
+func (d *DB) RemoveRouteFromGroup(ctx context.Context, groupID, routeID string) error {
+	_, err := d.sql.ExecContext(ctx, `DELETE FROM group_subnets WHERE group_id = ? AND route_id = ?`, groupID, routeID)
 	return err
 }
 
-func (d *DB) AddSubnetToDevice(ctx context.Context, deviceID, subnetID string) error {
+func (d *DB) AddSubnetToDevice(ctx context.Context, deviceID, routeID string) error {
 	_, err := d.sql.ExecContext(ctx,
-		`INSERT OR IGNORE INTO device_subnets (id, device_id, subnet_id, created_at) VALUES (?, ?, ?, ?)`,
-		newID(), deviceID, subnetID, time.Now().UTC())
+		`INSERT OR IGNORE INTO device_subnets (id, device_id, route_id, created_at) VALUES (?, ?, ?, ?)`,
+		newID(), deviceID, routeID, time.Now().UTC())
 	return err
 }
 
-func (d *DB) RemoveSubnetFromDevice(ctx context.Context, deviceID, subnetID string) error {
-	_, err := d.sql.ExecContext(ctx, `DELETE FROM device_subnets WHERE device_id = ? AND subnet_id = ?`, deviceID, subnetID)
+func (d *DB) RemoveSubnetFromDevice(ctx context.Context, deviceID, routeID string) error {
+	_, err := d.sql.ExecContext(ctx, `DELETE FROM device_subnets WHERE device_id = ? AND route_id = ?`, deviceID, routeID)
 	return err
 }
 
-func (d *DB) DeleteSubnet(ctx context.Context, id string) error {
+func (d *DB) DeleteRoute(ctx context.Context, id string) error {
 	result, err := d.sql.ExecContext(ctx, `DELETE FROM subnets WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("deleting subnet: %w", err)
@@ -104,9 +104,9 @@ func (d *DB) DeleteGroup(ctx context.Context, id string) error {
 	return err
 }
 
-// ListGroupSubnets returns a map of groupID -> []subnetID for all groups.
-func (d *DB) ListGroupSubnets(ctx context.Context) (map[string][]string, error) {
-	rows, err := d.sql.QueryContext(ctx, `SELECT group_id, subnet_id FROM group_subnets`)
+// ListGroupRoutes returns a map of groupID -> []routeID for all groups.
+func (d *DB) ListGroupRoutes(ctx context.Context) (map[string][]string, error) {
+	rows, err := d.sql.QueryContext(ctx, `SELECT group_id, route_id FROM group_subnets`)
 	if err != nil {
 		return nil, err
 	}
@@ -222,15 +222,110 @@ func (d *DB) DeviceCountPerGroup(ctx context.Context) (map[string]int, error) {
 	return result, rows.Err()
 }
 
-// UpdateGroup updates a group's name, description, session duration and max extensions.
-func (d *DB) UpdateGroup(ctx context.Context, id, name, description string, sessionDuration time.Duration, maxExtensions *int64) error {
+// UpdateGroup updates a group's name, description, session duration, max extensions,
+// routing mode and endpoint override.
+func (d *DB) UpdateGroup(ctx context.Context, id, name, description string, sessionDuration time.Duration, maxExtensions *int64, routingMode, endpointOverride string) error {
 	var maxExt interface{}
 	if maxExtensions != nil {
 		maxExt = *maxExtensions
 	}
+	if routingMode == "" {
+		routingMode = "routed"
+	}
 	_, err := d.sql.ExecContext(ctx, `
-		UPDATE groups SET name = ?, description = ?, session_duration = ?, max_extensions = ?
+		UPDATE groups SET name = ?, description = ?, session_duration = ?, max_extensions = ?,
+		                  routing_mode = ?, endpoint_override = ?
 		WHERE id = ?
-	`, name, description, int64(sessionDuration.Seconds()), maxExt, id)
+	`, name, description, int64(sessionDuration.Seconds()), maxExt, routingMode, endpointOverride, id)
+	return err
+}
+
+// AssignAgentToGroup adds an agent to a group's agent list.
+func (d *DB) AssignAgentToGroup(ctx context.Context, groupID, agentID string) error {
+	_, err := d.sql.ExecContext(ctx,
+		`INSERT OR IGNORE INTO group_agents (group_id, agent_id) VALUES (?, ?)`,
+		groupID, agentID)
+	return err
+}
+
+// RemoveAgentFromGroup removes an agent from a group.
+func (d *DB) RemoveAgentFromGroup(ctx context.Context, groupID, agentID string) error {
+	_, err := d.sql.ExecContext(ctx,
+		`DELETE FROM group_agents WHERE group_id = ? AND agent_id = ?`,
+		groupID, agentID)
+	return err
+}
+
+// GetGroupAgents returns all agents assigned to a group.
+func (d *DB) GetGroupAgents(ctx context.Context, groupID string) ([]*Agent, error) {
+	rows, err := d.sql.QueryContext(ctx, `
+		SELECT a.id, a.name, a.description, a.token_hash, a.vpn_pool, a.endpoint,
+		       a.is_active, a.last_seen_at, a.created_at
+		FROM agents a
+		INNER JOIN group_agents ga ON ga.agent_id = a.id
+		WHERE ga.group_id = ?
+	`, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var agents []*Agent
+	for rows.Next() {
+		var a Agent
+		if err := rows.Scan(&a.ID, &a.Name, &a.Description, &a.TokenHash,
+			&a.VPNPool, &a.Endpoint, &a.IsActive, &a.LastSeenAt, &a.CreatedAt); err != nil {
+			return nil, err
+		}
+		agents = append(agents, &a)
+	}
+	return agents, rows.Err()
+}
+
+// GetGroupAgentMap returns a map of groupID -> []agentID for all groups.
+func (d *DB) GetGroupAgentMap(ctx context.Context) (map[string][]string, error) {
+	rows, err := d.sql.QueryContext(ctx, `SELECT group_id, agent_id FROM group_agents`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make(map[string][]string)
+	for rows.Next() {
+		var gid, aid string
+		if err := rows.Scan(&gid, &aid); err != nil {
+			return nil, err
+		}
+		result[gid] = append(result[gid], aid)
+	}
+	return result, rows.Err()
+}
+
+// UpdateAgentDetails updates an agent's name, description, vpn_pool and endpoint.
+func (d *DB) UpdateAgentDetails(ctx context.Context, id, name, description, vpnPool, endpoint string) error {
+	_, err := d.sql.ExecContext(ctx,
+		`UPDATE agents SET name=?, description=?, vpn_pool=?, endpoint=? WHERE id=?`,
+		name, description, vpnPool, endpoint, id) // wg_public_key updated via UpdateAgentPublicKey
+	return err
+}
+
+// GetAgentByID returns a single agent by ID.
+func (d *DB) GetAgentByID(ctx context.Context, id string) (*Agent, error) {
+	row := d.sql.QueryRowContext(ctx, `
+		SELECT id, name, description, token_hash, vpn_pool, endpoint,
+		       is_active, last_seen_at, created_at
+		FROM agents WHERE id = ?`, id)
+	var a Agent
+	err := row.Scan(&a.ID, &a.Name, &a.Description, &a.TokenHash,
+		&a.VPNPool, &a.Endpoint, &a.WGPublicKey, &a.IsActive, &a.LastSeenAt, &a.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+// UpdateAgentPublicKey stores the agent's WireGuard public key.
+// Called when the agent connects and sends its public key in the ready message.
+func (d *DB) UpdateAgentPublicKey(ctx context.Context, agentID, pubKey string) error {
+	_, err := d.sql.ExecContext(ctx,
+		`UPDATE agents SET wg_public_key = ? WHERE id = ?`, pubKey, agentID)
 	return err
 }

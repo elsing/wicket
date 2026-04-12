@@ -12,6 +12,7 @@ import (
 
 	"github.com/wicket-vpn/wicket/internal/config"
 	"github.com/wicket-vpn/wicket/internal/db"
+	agentpkg "github.com/wicket-vpn/wicket/internal/agent"
 	"github.com/wicket-vpn/wicket/internal/wireguard"
 )
 
@@ -24,6 +25,7 @@ type Server struct {
 	peers      wireguard.PeerManager
 	svc        *Service
 	reconciler *Reconciler
+	agentHub   *agentpkg.Hub
 	socket     *socketServer
 
 	publicHTTP *http.Server
@@ -49,6 +51,25 @@ func New(cfg *config.Config, log *zap.Logger) (*Server, error) {
 		return nil, fmt.Errorf("setting up WireGuard interface: %w", err)
 	}
 
+	// Apply masquerade rules for any masqueraded groups that have VPN pools.
+	// This ensures rules survive container restarts.
+	if database != nil {
+		if groups, err := database.ListGroups(context.Background()); err == nil {
+			for _, g := range groups {
+				if g.RoutingMode == "masqueraded" {
+					if agents, err := database.GetGroupAgents(context.Background(), g.ID); err == nil {
+						for _, a := range agents {
+							if a.VPNPool != "" {
+								wireguard.EnsureMasquerade(cfg.WireGuard.Interface, a.VPNPool, log)
+								break
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
 	pm, err := wireguard.NewLocalPeerManager(cfg.WireGuard.Interface)
 	if err != nil {
 		return nil, fmt.Errorf("initialising WireGuard peer manager: %w", err)
@@ -66,7 +87,14 @@ func New(cfg *config.Config, log *zap.Logger) (*Server, error) {
 	svc := NewService(database, pm, cfg, log)
 	retainMetrics := time.Duration(cfg.Metrics.RetentionDays) * 24 * time.Hour
 	rec := NewReconciler(database, pm, svc, retainMetrics, log)
-	svc.SetReconciler(rec) // wire back so health check can report last run time
+	svc.SetReconciler(rec)
+
+	// Agent hub manages remote WireGuard agent connections.
+	agHub := agentpkg.New(database, log)
+	rec.SetAgentHub(agHub)
+	agHub.SetEventEmitter(func(eventType, agentID string) {
+		svc.emit(Event{Type: EventType(eventType), AgentID: agentID})
+	})
 
 	srv := &Server{
 		cfg:        cfg,
@@ -75,6 +103,7 @@ func New(cfg *config.Config, log *zap.Logger) (*Server, error) {
 		peers:      pm,
 		svc:        svc,
 		reconciler: rec,
+		agentHub:   agHub,
 	}
 
 	srv.socket = newSocketServer(cfg.Server.SocketPath, svc, log)
@@ -138,7 +167,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.log.Info("CLI socket listening", zap.String("path", s.cfg.Server.SocketPath))
 
 	publicErrCh := make(chan error, 1)
-	adminErrCh := make(chan error, 1)
+	adminErrCh  := make(chan error, 1)
 
 	go func() {
 		s.log.Info("public portal listening", zap.String("addr", s.cfg.Public.BindAddr))
@@ -164,6 +193,11 @@ func (s *Server) Start(ctx context.Context) error {
 	case err := <-adminErrCh:
 		return fmt.Errorf("admin portal failed: %w", err)
 	}
+}
+
+// AgentHub returns the agent hub for routing to the admin handler.
+func (s *Server) AgentHub() *agentpkg.Hub {
+	return s.agentHub
 }
 
 // Shutdown gracefully stops all subsystems.

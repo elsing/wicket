@@ -54,19 +54,19 @@ func renderGroupCard(w http.ResponseWriter, r *http.Request, data AdminGroupsDat
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	for _, g := range data.Groups {
 		if g.ID == groupID {
-			GroupCard(g, data.Subnets, data.GroupSubnets, data.DeviceCounts[g.ID]).Render(r.Context(), w) //nolint:errcheck
+			GroupCard(g, data.Routes, data.GroupRoutes, data.DeviceCounts[g.ID], data).Render(r.Context(), w) //nolint:errcheck
 			return
 		}
 	}
 }
 
-func renderAdminSubnets(w http.ResponseWriter, r *http.Request, data AdminSubnetsData) {
+func renderAdminRoutes(w http.ResponseWriter, r *http.Request, data AdminRoutesData) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if r.Header.Get("HX-Request") == "true" {
-		SubnetRows(data).Render(r.Context(), w) //nolint:errcheck
+		RouteRows(data).Render(r.Context(), w) //nolint:errcheck
 		return
 	}
-	AdminSubnetsPage(data).Render(r.Context(), w) //nolint:errcheck
+	AdminRoutesPage(data).Render(r.Context(), w) //nolint:errcheck
 }
 
 func renderAdminAgents(w http.ResponseWriter, r *http.Request, data AdminAgentsData) {

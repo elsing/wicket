@@ -2,8 +2,10 @@ package portal
 
 import (
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"strings"
@@ -77,7 +79,12 @@ func NewHandler(
 	// Authenticated routes
 	r.Group(func(r chi.Router) {
 		r.Use(h.sessions.Middleware("/auth/login", func(ctx context.Context, userID string) bool {
-			user, err := h.svc.DB().GetUserByID(ctx, userID)
+			dbCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			defer cancel()
+			user, err := h.svc.DB().GetUserByID(dbCtx, userID)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return true // transient DB error — don't log out
+			}
 			return err == nil && user != nil && user.IsActive
 		}))
 
@@ -499,5 +506,3 @@ func clientIP(r *http.Request) string {
 	}
 	return host
 }
-
-

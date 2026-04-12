@@ -48,13 +48,13 @@ func eventClass(event string) string {
 	return "event-default"
 }
 
-// groupHasSubnet checks whether a group has a specific subnet assigned.
-func groupHasSubnet(groupID, subnetID string, groupSubnets map[string][]string) bool {
-	if groupSubnets == nil {
+// groupHasRoute checks whether a group has a specific subnet assigned.
+func groupHasRoute(groupID, routeID string, groupRoutes map[string][]string) bool {
+	if groupRoutes == nil {
 		return false
 	}
-	for _, sid := range groupSubnets[groupID] {
-		if sid == subnetID {
+	for _, sid := range groupRoutes[groupID] {
+		if sid == routeID {
 			return true
 		}
 	}

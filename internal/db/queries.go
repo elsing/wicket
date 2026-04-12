@@ -211,6 +211,7 @@ func scanGroups(rows *sql.Rows) ([]*Group, error) {
 		if err := rows.Scan(
 			&g.ID, &g.Name, &g.Description, &sessionSecs,
 			&g.MaxExtensions, &g.IsPublic,
+			&g.RoutingMode, &g.EndpointOverride,
 			&g.CreatedAt, &g.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -222,30 +223,30 @@ func scanGroups(rows *sql.Rows) ([]*Group, error) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Subnets
+// Routes
 // ─────────────────────────────────────────────────────────────────────────────
 
-func (d *DB) GetSubnetByID(ctx context.Context, id string) (*Subnet, error) {
+func (d *DB) GetRouteByID(ctx context.Context, id string) (*Route, error) {
 	row := d.sql.QueryRowContext(ctx,
 		`SELECT id, name, cidr, description, created_at, updated_at FROM subnets WHERE id = ?`, id)
-	return scanSubnet(row)
+	return scanRoute(row)
 }
 
-func (d *DB) ListSubnets(ctx context.Context) ([]*Subnet, error) {
+func (d *DB) ListRoutes(ctx context.Context) ([]*Route, error) {
 	rows, err := d.sql.QueryContext(ctx,
 		`SELECT id, name, cidr, description, created_at, updated_at FROM subnets ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	return scanSubnets(rows)
+	return scanRoutes(rows)
 }
 
-func (d *DB) ListSubnetsForDevice(ctx context.Context, deviceID string) ([]*Subnet, error) {
+func (d *DB) ListRoutesForDevice(ctx context.Context, deviceID string) ([]*Route, error) {
 	rows, err := d.sql.QueryContext(ctx, `
 		SELECT s.id, s.name, s.cidr, s.description, s.created_at, s.updated_at
 		FROM device_subnets ds
-		JOIN subnets s ON s.id = ds.subnet_id
+		JOIN subnets s ON s.id = ds.route_id
 		WHERE ds.device_id = ?
 		ORDER BY s.name
 	`, deviceID)
@@ -253,7 +254,7 @@ func (d *DB) ListSubnetsForDevice(ctx context.Context, deviceID string) ([]*Subn
 		return nil, err
 	}
 	defer rows.Close()
-	subnets, err := scanSubnets(rows)
+	subnets, err := scanRoutes(rows)
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +265,7 @@ func (d *DB) ListSubnetsForDevice(ctx context.Context, deviceID string) ([]*Subn
 	rows2, err := d.sql.QueryContext(ctx, `
 		SELECT s.id, s.name, s.cidr, s.description, s.created_at, s.updated_at
 		FROM group_subnets gs
-		JOIN subnets s ON s.id = gs.subnet_id
+		JOIN subnets s ON s.id = gs.route_id
 		JOIN devices d ON d.group_id = gs.group_id
 		WHERE d.id = ?
 		ORDER BY s.name
@@ -273,10 +274,10 @@ func (d *DB) ListSubnetsForDevice(ctx context.Context, deviceID string) ([]*Subn
 		return nil, err
 	}
 	defer rows2.Close()
-	return scanSubnets(rows2)
+	return scanRoutes(rows2)
 }
 
-func (d *DB) CreateSubnet(ctx context.Context, name, cidr, description string) (*Subnet, error) {
+func (d *DB) CreateRoute(ctx context.Context, name, cidr, description string) (*Route, error) {
 	id := newID()
 	now := time.Now().UTC()
 	_, err := d.sql.ExecContext(ctx,
@@ -286,24 +287,24 @@ func (d *DB) CreateSubnet(ctx context.Context, name, cidr, description string) (
 	if err != nil {
 		return nil, fmt.Errorf("creating subnet: %w", err)
 	}
-	return d.GetSubnetByID(ctx, id)
+	return d.GetRouteByID(ctx, id)
 }
 
-func scanSubnet(row *sql.Row) (*Subnet, error) {
-	var s Subnet
+func scanRoute(row *sql.Row) (*Route, error) {
+	var s Route
 	return &s, row.Scan(&s.ID, &s.Name, &s.CIDR, &s.Description, &s.CreatedAt, &s.UpdatedAt)
 }
 
-func scanSubnets(rows *sql.Rows) ([]*Subnet, error) {
-	var subnets []*Subnet
+func scanRoutes(rows *sql.Rows) ([]*Route, error) {
+	var routes []*Route
 	for rows.Next() {
-		var s Subnet
+		var s Route
 		if err := rows.Scan(&s.ID, &s.Name, &s.CIDR, &s.Description, &s.CreatedAt, &s.UpdatedAt); err != nil {
 			return nil, err
 		}
-		subnets = append(subnets, &s)
+		routes = append(routes, &s)
 	}
-	return subnets, rows.Err()
+	return routes, rows.Err()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -627,20 +628,17 @@ func scanSession(row *sql.Row) (*Session, error) {
 	return &s, err
 }
 
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Agents
 // ─────────────────────────────────────────────────────────────────────────────
 
-func (d *DB) GetAgentByID(ctx context.Context, id string) (*Agent, error) {
-	row := d.sql.QueryRowContext(ctx,
-		`SELECT id, name, description, token, is_active, last_seen_at, created_at, updated_at
-		 FROM agents WHERE id = ?`, id)
-	return scanAgent(row)
-}
+// GetAgentByID is defined in queries_extra.go
 
 func (d *DB) ListAgents(ctx context.Context) ([]*Agent, error) {
 	rows, err := d.sql.QueryContext(ctx,
-		`SELECT id, name, description, token, is_active, last_seen_at, created_at, updated_at
+		`SELECT id, name, description, token_hash, vpn_pool, endpoint, wg_public_key,
+		        is_active, last_seen_at, created_at
 		 FROM agents ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -651,7 +649,8 @@ func (d *DB) ListAgents(ctx context.Context) ([]*Agent, error) {
 		var a Agent
 		if err := rows.Scan(
 			&a.ID, &a.Name, &a.Description, &a.TokenHash,
-			&a.IsActive, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt,
+			&a.VPNPool, &a.Endpoint, &a.WGPublicKey,
+			&a.IsActive, &a.LastSeenAt, &a.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -664,9 +663,9 @@ func (d *DB) CreateAgent(ctx context.Context, name, description, tokenHash strin
 	id := newID()
 	now := time.Now().UTC()
 	_, err := d.sql.ExecContext(ctx,
-		`INSERT INTO agents (id, name, description, token, is_active, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, 1, ?, ?)`,
-		id, name, description, tokenHash, now, now,
+		`INSERT INTO agents (id, name, description, token_hash, vpn_pool, endpoint, is_active, created_at)
+		 VALUES (?, ?, ?, ?, '', '', 1, ?)`,
+		id, name, description, tokenHash, now,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("creating agent: %w", err)
@@ -682,7 +681,8 @@ func (d *DB) TouchAgentSeen(ctx context.Context, id string) error {
 
 func (d *DB) GetActiveAgents(ctx context.Context) ([]*Agent, error) {
 	rows, err := d.sql.QueryContext(ctx,
-		`SELECT id, name, description, token, is_active, last_seen_at, created_at, updated_at
+		`SELECT id, name, description, token_hash, vpn_pool, endpoint, wg_public_key,
+		        is_active, last_seen_at, created_at
 		 FROM agents WHERE is_active = 1`)
 	if err != nil {
 		return nil, err
@@ -693,7 +693,8 @@ func (d *DB) GetActiveAgents(ctx context.Context) ([]*Agent, error) {
 		var a Agent
 		if err := rows.Scan(
 			&a.ID, &a.Name, &a.Description, &a.TokenHash,
-			&a.IsActive, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt,
+			&a.VPNPool, &a.Endpoint, &a.WGPublicKey,
+			&a.IsActive, &a.LastSeenAt, &a.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -702,14 +703,7 @@ func (d *DB) GetActiveAgents(ctx context.Context) ([]*Agent, error) {
 	return agents, rows.Err()
 }
 
-func scanAgent(row *sql.Row) (*Agent, error) {
-	var a Agent
-	err := row.Scan(
-		&a.ID, &a.Name, &a.Description, &a.TokenHash,
-		&a.IsActive, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt,
-	)
-	return &a, err
-}
+// scanAgent removed - use GetAgentByID in queries_extra.go
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Metrics

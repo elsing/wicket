@@ -2,7 +2,9 @@ package admin
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"strconv"
@@ -16,8 +18,9 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/wicket-vpn/wicket/internal/config"
-	"github.com/wicket-vpn/wicket/internal/core"
 	"github.com/wicket-vpn/wicket/internal/db"
+	agenthub "github.com/wicket-vpn/wicket/internal/agent"
+	"github.com/wicket-vpn/wicket/internal/core"
 	"github.com/wicket-vpn/wicket/internal/oidc"
 	"github.com/wicket-vpn/wicket/internal/portal"
 	"github.com/wicket-vpn/wicket/internal/ws"
@@ -34,6 +37,7 @@ type Handler struct {
 	oidc     *oidc.Provider
 	sessions *portal.SessionManager
 	hub      *ws.Hub
+	agentHub *agenthub.Hub
 	cfg      *config.Config
 	log      *zap.Logger
 }
@@ -45,6 +49,7 @@ func NewHandler(
 	svc *core.Service,
 	oidcProvider *oidc.Provider,
 	hub *ws.Hub,
+	agHub *agenthub.Hub,
 	cfg *config.Config,
 	log *zap.Logger,
 ) http.Handler {
@@ -55,6 +60,7 @@ func NewHandler(
 		oidc:     oidcProvider,
 		sessions: portal.NewSessionManager(cfg.Admin.SessionSecret, cfg.Public.SessionDuration, secure),
 		hub:      hub,
+		agentHub: agHub,
 		cfg:      cfg,
 		log:      log,
 	}
@@ -69,6 +75,9 @@ func NewHandler(
 	// Health — unauthenticated
 	r.Get("/health", h.handleHealth)
 
+	// Agent WebSocket — token auth, no session cookie required
+	r.Get("/agent/connect", h.handleAgentConnect)
+
 	// Auth routes — OIDC and local fallback
 	r.Get("/auth/login", h.handleLoginPage)
 	r.Get("/auth/sso", h.handleSSO)
@@ -78,13 +87,20 @@ func NewHandler(
 
 	r.Group(func(r chi.Router) {
 		r.Use(h.sessions.Middleware("/auth/login", func(ctx context.Context, userID string) bool {
-			// For local admin accounts, UserID is the local_admin ID — check both tables
-			user, err := h.svc.DB().GetUserByID(ctx, userID)
+			// Use a short timeout so a slow DB doesn't sign the user out.
+			// A genuine missing user will still be caught — this just tolerates transient errors.
+			dbCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			defer cancel()
+			user, err := h.svc.DB().GetUserByID(dbCtx, userID)
 			if err == nil && user != nil && user.IsActive && user.IsAdmin {
 				return true
 			}
+			// err != nil could be a transient DB error — only reject if it's clearly not found
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return true // be permissive on DB errors to avoid spurious logouts
+			}
 			// Check local admin table
-			_, err = h.svc.DB().GetLocalAdminByID(ctx, userID)
+			_, err = h.svc.DB().GetLocalAdminByID(dbCtx, userID)
 			return err == nil
 		}))
 		r.Use(portal.RequireAdmin)
@@ -113,13 +129,16 @@ func NewHandler(
 		r.Get("/groups", h.handleGroups)
 		r.Post("/groups", h.handleCreateGroup)
 		r.Put("/groups/{groupID}", h.handleUpdateGroup)
+		r.Put("/agents/{agentID}", h.handleUpdateAgent)
+		r.Post("/groups/{groupID}/agents", h.handleAssignGroupAgent)
+		r.Delete("/groups/{groupID}/agents/{agentID}", h.handleRemoveGroupAgent)
 		r.Delete("/groups/{groupID}", h.handleDeleteGroup)
-		r.Post("/groups/{groupID}/subnets", h.handleAssignGroupSubnet)
-		r.Delete("/groups/{groupID}/subnets/{subnetID}", h.handleRemoveGroupSubnet)
+		r.Post("/groups/{groupID}/routes", h.handleAssignGroupRoute)
+		r.Delete("/groups/{groupID}/routes/{routeID}", h.handleRemoveGroupRoute)
 
-		r.Get("/subnets", h.handleSubnets)
-		r.Post("/subnets", h.handleCreateSubnet)
-		r.Delete("/subnets/{subnetID}", h.handleDeleteSubnet)
+		r.Get("/routes", h.handleRoutes)
+		r.Post("/routes", h.handleCreateRoute)
+		r.Delete("/routes/{routeID}", h.handleDeleteRoute)
 
 		r.Get("/agents", h.handleAgents)
 		r.Post("/agents", h.handleCreateAgent)
@@ -218,6 +237,7 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
+
 func (h *Handler) handleLocalLogin(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		renderAdminLoginPage(w, r, "Invalid request")
@@ -270,33 +290,32 @@ func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(status) //nolint:errcheck
 }
 
-func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) dashboardData(r *http.Request) AdminDashboardData {
 	sess := portal.SessionFromContext(r.Context())
 	pending, _ := h.svc.DB().ListPendingDevices(r.Context())
 	active, _ := h.svc.DB().ListActiveSessions(r.Context())
 	agents, _ := h.svc.DB().ListAgents(r.Context())
-	renderAdminDashboard(w, r, AdminDashboardData{
-		Session:        sess,
-		PendingDevices: pending,
-		ActiveSessions: active,
-		Agents:         agents,
-		WSCounts:       h.hub.ConnectedCount(),
-	})
+	agentsConnected := 0
+	if h.agentHub != nil {
+		agentsConnected = len(h.agentHub.ConnectedIDs())
+	}
+	return AdminDashboardData{
+		Session:         sess,
+		PendingDevices:  pending,
+		ActiveSessions:  active,
+		Agents:          agents,
+		WSCounts:        h.hub.ConnectedCount(),
+		AgentsConnected: agentsConnected,
+	}
+}
+
+func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
+	renderAdminDashboard(w, r, h.dashboardData(r))
 }
 
 func (h *Handler) handleDashboardFragment(w http.ResponseWriter, r *http.Request) {
-	sess := portal.SessionFromContext(r.Context())
-	pending, _ := h.svc.DB().ListPendingDevices(r.Context())
-	active, _ := h.svc.DB().ListActiveSessions(r.Context())
-	agents, _ := h.svc.DB().ListAgents(r.Context())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	DashboardContent(AdminDashboardData{
-		Session:        sess,
-		PendingDevices: pending,
-		ActiveSessions: active,
-		Agents:         agents,
-		WSCounts:       h.hub.ConnectedCount(),
-	}).Render(r.Context(), w) //nolint:errcheck
+	DashboardContent(h.dashboardData(r)).Render(r.Context(), w) //nolint:errcheck
 }
 
 func (h *Handler) handleDevices(w http.ResponseWriter, r *http.Request) {
@@ -474,6 +493,44 @@ func (h *Handler) handleAssignGroup(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+func (h *Handler) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
+	agentID := chi.URLParam(r, "agentID")
+	if err := h.svc.DB().UpdateAgentDetails(r.Context(), agentID,
+		r.FormValue("name"),
+		r.FormValue("description"),
+		r.FormValue("vpn_pool"),
+		r.FormValue("endpoint"),
+	); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// Return updated agent card
+	if _, err := h.svc.DB().GetAgentByID(r.Context(), agentID); err != nil {
+		h.handleAgents(w, r)
+		return
+	}
+	h.handleAgents(w, r)
+}
+
+func (h *Handler) handleAssignGroupAgent(w http.ResponseWriter, r *http.Request) {
+	groupID := chi.URLParam(r, "groupID")
+	if err := h.svc.DB().AssignAgentToGroup(r.Context(), groupID, r.FormValue("agent_id")); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.handleGroups(w, r)
+}
+
+func (h *Handler) handleRemoveGroupAgent(w http.ResponseWriter, r *http.Request) {
+	groupID := chi.URLParam(r, "groupID")
+	agentID := chi.URLParam(r, "agentID")
+	if err := h.svc.DB().RemoveAgentFromGroup(r.Context(), groupID, agentID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.handleGroups(w, r)
+}
+
 func (h *Handler) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 	groupID := chi.URLParam(r, "groupID")
 	name := r.FormValue("name")
@@ -498,7 +555,11 @@ func (h *Handler) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 			maxExt = &n
 		}
 	}
-	if err := h.svc.DB().UpdateGroup(r.Context(), groupID, name, r.FormValue("description"), d, maxExt); err != nil {
+	routingMode := r.FormValue("routing_mode")
+	if routingMode != "masqueraded" {
+		routingMode = "routed"
+	}
+	if err := h.svc.DB().UpdateGroup(r.Context(), groupID, name, r.FormValue("description"), d, maxExt, routingMode, r.FormValue("endpoint_override")); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -508,13 +569,15 @@ func (h *Handler) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleGroups(w http.ResponseWriter, r *http.Request) {
 	sess := portal.SessionFromContext(r.Context())
 	groups, _ := h.svc.ListAllGroups(r.Context())
-	subnets, _ := h.svc.ListAllSubnets(r.Context())
-	groupSubnets, _ := h.svc.DB().ListGroupSubnets(r.Context())
+	subnets, _ := h.svc.ListAllRoutes(r.Context())
+	groupRoutes, _ := h.svc.DB().ListGroupRoutes(r.Context())
+	deviceCounts, _ := h.svc.DB().DeviceCountPerGroup(r.Context())
 	renderAdminGroups(w, r, AdminGroupsData{
 		Session:      sess,
 		Groups:       groups,
-		Subnets:      subnets,
-		GroupSubnets: groupSubnets,
+		Routes:      subnets,
+		GroupRoutes: groupRoutes,
+		DeviceCounts: deviceCounts,
 	})
 }
 
@@ -552,35 +615,35 @@ func (h *Handler) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 	h.handleGroups(w, r)
 }
 
-func (h *Handler) handleAssignGroupSubnet(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleAssignGroupRoute(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
 	groupID := chi.URLParam(r, "groupID")
-	if err := h.svc.DB().AddSubnetToGroup(r.Context(), groupID, r.FormValue("subnet_id")); err != nil {
+	if err := h.svc.DB().AddRouteToGroup(r.Context(), groupID, r.FormValue("route_id")); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	h.renderGroupCard(w, r, groupID)
 }
 
-func (h *Handler) handleRemoveGroupSubnet(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleRemoveGroupRoute(w http.ResponseWriter, r *http.Request) {
 	groupID := chi.URLParam(r, "groupID")
-	if err := h.svc.DB().RemoveSubnetFromGroup(r.Context(), groupID, chi.URLParam(r, "subnetID")); err != nil {
+	if err := h.svc.DB().RemoveRouteFromGroup(r.Context(), groupID, chi.URLParam(r, "routeID")); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	h.renderGroupCard(w, r, groupID)
 }
 
-func (h *Handler) handleSubnets(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleRoutes(w http.ResponseWriter, r *http.Request) {
 	sess := portal.SessionFromContext(r.Context())
-	subnets, _ := h.svc.ListAllSubnets(r.Context())
-	renderAdminSubnets(w, r, AdminSubnetsData{Session: sess, Subnets: subnets})
+	subnets, _ := h.svc.ListAllRoutes(r.Context())
+	renderAdminRoutes(w, r, AdminRoutesData{Session: sess, Routes: subnets})
 }
 
-func (h *Handler) handleCreateSubnet(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleCreateRoute(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
@@ -590,15 +653,15 @@ func (h *Handler) handleCreateSubnet(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "name and cidr are required", http.StatusBadRequest)
 		return
 	}
-	if _, err := h.svc.DB().CreateSubnet(r.Context(), name, cidr, r.FormValue("description")); err != nil {
+	if _, err := h.svc.DB().CreateRoute(r.Context(), name, cidr, r.FormValue("description")); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	h.handleSubnets(w, r)
+	h.handleRoutes(w, r)
 }
 
-func (h *Handler) handleDeleteSubnet(w http.ResponseWriter, r *http.Request) {
-	if err := h.svc.DB().DeleteSubnet(r.Context(), chi.URLParam(r, "subnetID")); err != nil {
+func (h *Handler) handleDeleteRoute(w http.ResponseWriter, r *http.Request) {
+	if err := h.svc.DB().DeleteRoute(r.Context(), chi.URLParam(r, "routeID")); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -609,6 +672,18 @@ func (h *Handler) handleAgents(w http.ResponseWriter, r *http.Request) {
 	sess := portal.SessionFromContext(r.Context())
 	agents, _ := h.svc.DB().ListAgents(r.Context())
 	counts := h.hub.ConnectedCount()
+
+	// Mark which agents are currently connected via the agent hub.
+	if h.agentHub != nil {
+		connectedIDs := make(map[string]bool)
+		for _, id := range h.agentHub.ConnectedIDs() {
+			connectedIDs[id] = true
+		}
+		for _, a := range agents {
+			a.Connected = connectedIDs[a.ID]
+		}
+	}
+
 	renderAdminAgents(w, r, AdminAgentsData{Session: sess, Agents: agents, ConnectedCount: counts[ws.KindAgent]})
 }
 
@@ -634,6 +709,44 @@ func (h *Handler) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	renderAgentToken(w, r, agent, token)
+}
+
+func (h *Handler) handleAgentConnect(w http.ResponseWriter, r *http.Request) {
+	// Agents authenticate with "Authorization: Bearer <token>" header.
+	token := ""
+	if auth := r.Header.Get("Authorization"); len(auth) > 7 && auth[:7] == "Bearer " {
+		token = auth[7:]
+	}
+	if token == "" {
+		http.Error(w, "missing token", http.StatusUnauthorized)
+		return
+	}
+
+	agentRecord, err := h.svc.VerifyAgentToken(r.Context(), token)
+	if err != nil {
+		http.Error(w, "invalid token", http.StatusUnauthorized)
+		return
+	}
+	if !agentRecord.IsActive {
+		http.Error(w, "agent revoked", http.StatusForbidden)
+		return
+	}
+
+	// Build the full sync payload for this agent.
+	syncPayload, err := agenthub.BuildSyncPayload(
+		r.Context(),
+		h.svc.DB(),
+		agentRecord.ID,
+		agentRecord.VPNPool,  // used as WG interface name hint
+		"",                   // private key managed by agent itself
+		h.svc.Config().WireGuard.ListenPort,
+	)
+	if err != nil {
+		h.log.Warn("building agent sync payload", zap.Error(err))
+		// Still connect — send empty sync
+	}
+
+	h.agentHub.HandleConnect(w, r, agentRecord.ID, syncPayload)
 }
 
 func (h *Handler) handleRevokeAgent(w http.ResponseWriter, r *http.Request) {
@@ -693,18 +806,12 @@ func (h *Handler) handleDeviceMetrics(w http.ResponseWriter, r *http.Request) {
 	for i := 1; i < len(snaps); i++ {
 		prev, cur := snaps[i-1], snaps[i]
 		dt := cur.RecordedAt.Sub(prev.RecordedAt).Seconds()
-		if dt <= 0 {
-			dt = 30
-		}
+		if dt <= 0 { dt = 30 }
 		// Rate in bytes/sec. Guard against counter resets (negative deltas).
 		sent := float64(cur.BytesSent-prev.BytesSent) / dt
 		recv := float64(cur.BytesReceived-prev.BytesReceived) / dt
-		if sent < 0 {
-			sent = 0
-		}
-		if recv < 0 {
-			recv = 0
-		}
+		if sent < 0 { sent = 0 }
+		if recv < 0 { recv = 0 }
 		points = append(points, point{
 			Time:          cur.RecordedAt.Format("15:04"),
 			BytesSent:     sent,
@@ -724,7 +831,7 @@ func (h *Handler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 // renderDeviceRow fetches a device and renders its updated table row.
 func (h *Handler) renderDeviceRow(w http.ResponseWriter, r *http.Request, deviceID string) {
 	devices, _ := h.svc.DB().ListAllDevices(r.Context())
-	subnets, _ := h.svc.ListAllSubnets(r.Context())
+	subnets, _ := h.svc.ListAllRoutes(r.Context())
 	_ = subnets
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	for _, dev := range devices {
@@ -738,12 +845,12 @@ func (h *Handler) renderDeviceRow(w http.ResponseWriter, r *http.Request, device
 // renderGroupCard fetches current group data and renders just that card.
 func (h *Handler) renderGroupCard(w http.ResponseWriter, r *http.Request, groupID string) {
 	groups, _ := h.svc.ListAllGroups(r.Context())
-	subnets, _ := h.svc.ListAllSubnets(r.Context())
-	groupSubnets, _ := h.svc.DB().ListGroupSubnets(r.Context())
+	subnets, _ := h.svc.ListAllRoutes(r.Context())
+	groupRoutes, _ := h.svc.DB().ListGroupRoutes(r.Context())
 	renderGroupCard(w, r, AdminGroupsData{
 		Groups:       groups,
-		Subnets:      subnets,
-		GroupSubnets: groupSubnets,
+		Routes:      subnets,
+		GroupRoutes: groupRoutes,
 	}, groupID)
 }
 

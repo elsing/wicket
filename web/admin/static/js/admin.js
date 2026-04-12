@@ -170,6 +170,19 @@ function fmtRate(bps) {
 }
 
 // ── Group edit toggle ─────────────────────────────────────────────────────────
+// Event delegation for data-attribute based toggles (templ-safe approach)
+document.addEventListener('click', function(e) {
+  const groupEl = e.target.closest('[data-toggle-group-edit]');
+  if (groupEl) { window.toggleGroupEdit(groupEl.dataset.toggleGroupEdit); return; }
+  const agentEl = e.target.closest('[data-toggle-agent-edit]');
+  if (agentEl) { window.toggleAgentEdit(agentEl.dataset.toggleAgentEdit || agentEl.closest('[id^="agent-"]')?.id?.replace('agent-','')); return; }
+});
+
+window.toggleAgentEdit = function(agentID) {
+  const el = document.getElementById('agent-edit-' + agentID);
+  if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+};
+
 window.toggleGroupEdit = function(groupID) {
   const el = document.getElementById('edit-' + groupID);
   if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';

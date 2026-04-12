@@ -24,16 +24,18 @@ type Group struct {
 	UpdatedAt       time.Time     `db:"updated_at"`
 
 	// Populated by joins, not stored in this table.
-	Subnets []Subnet `db:"-"`
+	Routes          []Route `db:"-"`
+	RoutingMode      string  `db:"routing_mode"`
+	EndpointOverride string  `db:"endpoint_override"`
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Subnets
+// Routes
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Subnet is a named CIDR block available for routing.
+// Route is a named CIDR block available for routing (formerly Subnet).
 // Designed to integrate cleanly with OSPF mesh routing.
-type Subnet struct {
+type Route struct {
 	ID          string    `db:"id"`
 	Name        string    `db:"name"`
 	CIDR        string    `db:"cidr"`
@@ -42,21 +44,21 @@ type Subnet struct {
 	UpdatedAt   time.Time `db:"updated_at"`
 }
 
-// GroupSubnet is the many-to-many join between groups and subnets.
-type GroupSubnet struct {
+// GroupRoute is the many-to-many join between groups and routes.
+type GroupRoute struct {
 	ID        string    `db:"id"`
 	GroupID   string    `db:"group_id"`
-	SubnetID  string    `db:"subnet_id"`
+	RouteID  string    `db:"route_id"`
 	CreatedAt time.Time `db:"created_at"`
 }
 
-// DeviceSubnet is a per-device subnet override, set by an admin.
-// When any DeviceSubnets exist for a device, they replace (not append to)
+// DeviceRoute is a per-device route override, set by an admin.
+// When any DeviceRoutes exist for a device, they replace (not append to)
 // the group's subnets for that device's WireGuard AllowedIPs.
-type DeviceSubnet struct {
+type DeviceRoute struct {
 	ID        string    `db:"id"`
 	DeviceID  string    `db:"device_id"`
-	SubnetID  string    `db:"subnet_id"`
+	RouteID  string    `db:"route_id"`
 	CreatedAt time.Time `db:"created_at"`
 }
 
@@ -67,14 +69,14 @@ type DeviceSubnet struct {
 // User represents a person who has logged in via OIDC.
 // Created automatically on first login.
 type User struct {
-	ID          string       `db:"id"`
-	OIDCSub     string       `db:"oidc_sub"` // stable OIDC subject — primary identifier
-	Email       string       `db:"email"`
-	DisplayName string       `db:"display_name"`
-	IsAdmin     bool         `db:"is_admin"`
-	IsActive    bool         `db:"is_active"`
-	CreatedAt   time.Time    `db:"created_at"`
-	UpdatedAt   time.Time    `db:"updated_at"`
+	ID          string    `db:"id"`
+	OIDCSub     string    `db:"oidc_sub"`     // stable OIDC subject — primary identifier
+	Email       string    `db:"email"`
+	DisplayName string    `db:"display_name"`
+	IsAdmin     bool      `db:"is_admin"`
+	IsActive    bool      `db:"is_active"`
+	CreatedAt   time.Time `db:"created_at"`
+	UpdatedAt   time.Time `db:"updated_at"`
 	LastLoginAt sql.NullTime `db:"last_login_at"`
 
 	// Populated by joins.
@@ -106,8 +108,8 @@ type Device struct {
 	PublicKey        string       `db:"public_key"`
 	AssignedIP       string       `db:"assigned_ip"`
 	IsApproved       bool         `db:"is_approved"`
-	IsActive         bool         `db:"is_active"`         // admin-level toggle
-	AutoRenew        bool         `db:"auto_renew"`        // activate session on portal login
+	IsActive         bool         `db:"is_active"`        // admin-level toggle
+	AutoRenew        bool         `db:"auto_renew"`       // activate session on portal login
 	ConfigDownloaded bool         `db:"config_downloaded"` // one-time download guard
 	CreatedAt        time.Time    `db:"created_at"`
 	UpdatedAt        time.Time    `db:"updated_at"`
@@ -116,7 +118,7 @@ type Device struct {
 	// Populated by joins.
 	Group         *Group   `db:"-"`
 	User          *User    `db:"-"`
-	Subnets       []Subnet `db:"-"` // device overrides if set, else group subnets
+	Routes       []Route  `db:"-"` // device overrides if set, else group routes
 	ActiveSession *Session `db:"-"`
 }
 
@@ -176,11 +178,13 @@ type Agent struct {
 	ID          string       `db:"id"`
 	Name        string       `db:"name"`
 	Description string       `db:"description"`
-	TokenHash   string       `db:"token"` // bcrypt hashed agent token
+	TokenHash   string       `db:"token_hash"`
+	VPNPool     string       `db:"vpn_pool"`     // CIDR e.g. "10.1.0.0/24"
+	WGPublicKey string       `db:"wg_public_key"` // agent's WireGuard public key
+	Endpoint    string       `db:"endpoint"`     // host:port for client configs
 	IsActive    bool         `db:"is_active"`
 	LastSeenAt  sql.NullTime `db:"last_seen_at"`
 	CreatedAt   time.Time    `db:"created_at"`
-	UpdatedAt   time.Time    `db:"updated_at"`
 
 	// Set at runtime, not stored.
 	Connected bool `db:"-"`
@@ -213,7 +217,7 @@ type AuditLog struct {
 	DeviceID   sql.NullString `db:"device_id"`
 	AgentID    sql.NullString `db:"agent_id"`
 	Event      string         `db:"event"`
-	Metadata   string         `db:"metadata"` // JSON blob
+	Metadata   string         `db:"metadata"`   // JSON blob
 	IPAddress  string         `db:"ip_address"`
 	CreatedAt  time.Time      `db:"created_at"`
 	UserEmail  string         `db:"-"` // populated by join queries
@@ -222,8 +226,8 @@ type AuditLog struct {
 
 // Audit event constants. Format: "entity.action"
 const (
-	AuditEventUserLogin   = "user.login"
-	AuditEventUserCreated = "user.created"
+	AuditEventUserLogin    = "user.login"
+	AuditEventUserCreated  = "user.created"
 
 	AuditEventDeviceCreated  = "device.created"
 	AuditEventDeviceApproved = "device.approved"

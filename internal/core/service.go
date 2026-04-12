@@ -176,7 +176,7 @@ func (s *Service) CreateDevice(ctx context.Context, userID, groupID, name, ipAdd
 	}
 
 	// Allocate the next available IP in the VPN subnet.
-	assignedIP, err := s.allocateIP(ctx)
+	assignedIP, err := s.allocateIP(ctx, groupID)
 	if err != nil {
 		return nil, fmt.Errorf("allocating VPN IP: %w", err)
 	}
@@ -220,7 +220,7 @@ func (s *Service) CreateDevice(ctx context.Context, userID, groupID, name, ipAdd
 
 // buildClientConfig assembles the WireGuard .conf for a device.
 func (s *Service) buildClientConfig(ctx context.Context, dev *db.Device, privateKey string) (string, error) {
-	subnets, err := s.db.ListSubnetsForDevice(ctx, dev.ID)
+	subnets, err := s.db.ListRoutesForDevice(ctx, dev.ID)
 	if err != nil {
 		return "", fmt.Errorf("listing subnets for device: %w", err)
 	}
@@ -249,9 +249,35 @@ func (s *Service) buildClientConfig(ctx context.Context, dev *db.Device, private
 		}
 	}
 
-	serverPubKey, err := wireguard.ServerPublicKey(s.cfg.WireGuard.PrivateKey)
+	// Determine server public key and endpoint from group/agent config.
+	// Priority: group endpoint override > agent endpoint > global config.
+	globalPubKey, err := wireguard.ServerPublicKey(s.cfg.WireGuard.PrivateKey)
 	if err != nil {
 		return "", fmt.Errorf("deriving server public key: %w", err)
+	}
+	serverPubKey := globalPubKey
+	endpoint := s.cfg.WireGuard.Endpoint
+
+	if group, err := s.db.GetGroupByID(ctx, dev.GroupID); err == nil {
+		if group.EndpointOverride != "" {
+			endpoint = group.EndpointOverride
+		}
+		if agents, err := s.db.GetGroupAgents(ctx, dev.GroupID); err == nil {
+			for _, a := range agents {
+				if !a.IsActive {
+					continue
+				}
+				// Use agent's WireGuard public key if available.
+				// This is set when the agent connects and sends its ready message.
+				if a.WGPublicKey != "" {
+					serverPubKey = a.WGPublicKey
+				}
+				if group.EndpointOverride == "" && a.Endpoint != "" {
+					endpoint = a.Endpoint
+				}
+				break
+			}
+		}
 	}
 
 	conf := wireguard.BuildClientConfig(wireguard.ClientConfigParams{
@@ -259,7 +285,7 @@ func (s *Service) buildClientConfig(ctx context.Context, dev *db.Device, private
 		AssignedIP:      dev.AssignedIP,
 		DNS:             s.cfg.WireGuard.DNS,
 		ServerPublicKey: serverPubKey,
-		ServerEndpoint:  s.cfg.WireGuard.Endpoint, // already host:port from config
+		ServerEndpoint:  endpoint,
 		AllowedIPs:      allowedIPs,
 		MTU:             s.cfg.WireGuard.MTU,
 	})
@@ -270,7 +296,7 @@ func (s *Service) buildClientConfig(ctx context.Context, dev *db.Device, private
 // buildPeerConfigForDevice constructs a wireguard.PeerConfig from a Device.
 // Used for immediate peer addition on session activation.
 func (s *Service) buildPeerConfigForDevice(ctx context.Context, dev *db.Device) (*wireguard.PeerConfig, error) {
-	subnets, err := s.db.ListSubnetsForDevice(ctx, dev.ID)
+	subnets, err := s.db.ListRoutesForDevice(ctx, dev.ID)
 	if err != nil {
 		return nil, fmt.Errorf("listing subnets: %w", err)
 	}
@@ -750,7 +776,7 @@ func (s *Service) AdminExtendSession(ctx context.Context, sessionID, adminUserID
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Groups & Subnets
+// Groups & Routes
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ListGroupsForUser returns groups available to a user.
@@ -763,9 +789,9 @@ func (s *Service) ListAllGroups(ctx context.Context) ([]*db.Group, error) {
 	return s.db.ListGroups(ctx)
 }
 
-// ListAllSubnets returns all subnets (admin only).
-func (s *Service) ListAllSubnets(ctx context.Context) ([]*db.Subnet, error) {
-	return s.db.ListSubnets(ctx)
+// ListAllRoutes returns all subnets (admin only).
+func (s *Service) ListAllRoutes(ctx context.Context) ([]*db.Route, error) {
+	return s.db.ListRoutes(ctx)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -776,6 +802,11 @@ func (s *Service) ListAllSubnets(ctx context.Context) ([]*db.Subnet, error) {
 type HealthStatus struct {
 	Healthy bool              `json:"healthy"`
 	Checks  map[string]string `json:"checks"`
+}
+
+// Config returns the service configuration (read-only).
+func (s *Service) Config() *config.Config {
+	return s.cfg
 }
 
 // ReconcilerLastRun returns the time the reconciler last completed a pass.
@@ -827,37 +858,57 @@ func (s *Service) Health(reconcilerLastRun time.Time) HealthStatus {
 // IP allocation
 // ─────────────────────────────────────────────────────────────────────────────
 
-// allocateIP finds the next available IP in the VPN subnet.
-func (s *Service) allocateIP(ctx context.Context) (string, error) {
-	_, network, err := net.ParseCIDR(s.cfg.WireGuard.Address)
-	if err != nil {
-		return "", fmt.Errorf("parsing server VPN address %q: %w", s.cfg.WireGuard.Address, err)
+// allocateIP finds the next available IP for a device.
+// If the group has an agent with a VPN pool, allocates from that pool.
+// Otherwise falls back to the global VPN subnet from config.
+func (s *Service) allocateIP(ctx context.Context, groupID string) (string, error) {
+	// Try to get the pool from the group's assigned agent.
+	poolCIDR := ""
+	if groupID != "" {
+		if agents, err := s.db.GetGroupAgents(ctx, groupID); err == nil && len(agents) > 0 {
+			// Use the first agent's pool (for routed groups this is the only agent;
+			// for masqueraded groups all agents share the same pool).
+			for _, a := range agents {
+				if a.VPNPool != "" {
+					poolCIDR = a.VPNPool
+					break
+				}
+			}
+		}
 	}
 
-	// Use ALL devices (pending, disabled, approved) so IPs are never reused.
+	// Fall back to global config subnet.
+	if poolCIDR == "" {
+		poolCIDR = s.cfg.WireGuard.Address
+	}
+
+	_, network, err := net.ParseCIDR(poolCIDR)
+	if err != nil {
+		return "", fmt.Errorf("parsing VPN pool %q: %w", poolCIDR, err)
+	}
+
+	// Use ALL devices so IPs are never reused.
 	allDevices, err := s.db.ListAllDevices(ctx)
 	if err != nil {
 		return "", fmt.Errorf("listing devices for IP allocation: %w", err)
 	}
 
 	used := make(map[string]bool, len(allDevices)+2)
+	used[network.IP.String()] = true // reserve network address
 
-	// Reserve the network address (.0) and broadcast address.
-	used[network.IP.String()] = true
-
-	// Reserve the server's own IP — normalise to 4-byte to match iterator.
+	// Reserve the server's own IP if it falls in this pool.
 	serverIP, _, _ := net.ParseCIDR(s.cfg.WireGuard.Address)
 	if ip4 := serverIP.To4(); ip4 != nil {
 		serverIP = ip4
 	}
-	used[serverIP.String()] = true
+	if network.Contains(serverIP) {
+		used[serverIP.String()] = true
+	}
 
 	for _, dev := range allDevices {
 		used[dev.AssignedIP] = true
 	}
 
-	// Walk the subnet sequentially for the next free address.
-	// cloneIP starts at network+1; server IP is in used so will be skipped.
 	for ip := cloneIP(network.IP); network.Contains(ip); incrementIP(ip) {
 		candidate := ip.String()
 		if !used[candidate] {
@@ -865,7 +916,7 @@ func (s *Service) allocateIP(ctx context.Context) (string, error) {
 		}
 	}
 
-	return "", errors.New("VPN subnet exhausted: no available IP addresses")
+	return "", fmt.Errorf("VPN pool %s exhausted: no available IP addresses", poolCIDR)
 }
 
 func cloneIP(ip net.IP) net.IP {
