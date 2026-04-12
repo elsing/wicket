@@ -171,51 +171,89 @@ func (h *Handler) handleAgentInstallScript(w http.ResponseWriter, r *http.Reques
 }
 
 func generateInstallScript(serverURL string) string {
+	// Determine the admin WebSocket URL from the public URL.
+	// Public portal is HTTP/HTTPS, agent connects to admin portal via WSS.
+	// We embed it as a prompt default so the user can override it.
 	return `#!/usr/bin/env bash
 # wicket-agent installer
-# Usage: curl -fsSL ` + serverURL + `/agent/install.sh | bash
+# Designed to be downloaded and run directly (NOT piped to bash,
+# since piping disables interactive prompts):
+#
+#   curl -fsSL ` + serverURL + `/agent/install.sh -o install-agent.sh
+#   chmod +x install-agent.sh
+#   sudo ./install-agent.sh
+#
+# Or non-interactively with env vars:
+#   AGENT_TOKEN=xxx WICKET_ADMIN_URL=wss://admin.example.com:9090 \
+#     sudo bash install-agent.sh
 set -euo pipefail
 
-WICKET_SERVER="` + serverURL + `"
+WICKET_PUBLIC_URL="` + serverURL + `"
 INSTALL_DIR="/usr/local/bin"
 SERVICE_NAME="wicket-agent"
 
-RED='''\033[0;31m'''; GREEN='''\033[0;32m'''; YELLOW='''\033[1;33m'''; NC='''\033[0m'''
+RED='\''\\033[0;31m'\''; GREEN='\''\\033[0;32m'\''; YELLOW='\''\\033[1;33m'\''; BOLD='\''\\033[1m'\''; NC='\''\\033[0m'\''
 
 info()    { echo -e "${GREEN}[wicket-agent]${NC} $*"; }
 warning() { echo -e "${YELLOW}[wicket-agent]${NC} $*"; }
 error()   { echo -e "${RED}[wicket-agent]${NC} $*" >&2; exit 1; }
+prompt()  { echo -e "${BOLD}$*${NC}"; }
 
-# Must run as root
-[ "$(id -u)" -eq 0 ] || error "Please run as root: sudo bash <(curl -fsSL ${WICKET_SERVER}/agent/install.sh)"
+[ "$(id -u)" -eq 0 ] || error "Please run as root: sudo $0"
 
-info "Downloading wicket-agent from ${WICKET_SERVER}..."
-curl -fsSL --output "${INSTALL_DIR}/wicket-agent" "${WICKET_SERVER}/agent/download"
+# ── Download binary ────────────────────────────────────────────────────────────
+info "Downloading wicket-agent from ${WICKET_PUBLIC_URL}..."
+curl -fsSL --output "${INSTALL_DIR}/wicket-agent" "${WICKET_PUBLIC_URL}/agent/download"
 chmod +x "${INSTALL_DIR}/wicket-agent"
 info "Installed to ${INSTALL_DIR}/wicket-agent"
 
-# Prompt for configuration
-echo ""
-read -rp "Agent token (from Wicket admin UI): " AGENT_TOKEN
-[ -z "${AGENT_TOKEN}" ] && error "Token is required"
-
-read -rp "WireGuard interface name [wg1]: " WG_IFACE
-WG_IFACE="${WG_IFACE:-wg1}"
-
-read -rp "WireGuard listen port [51820]: " WG_PORT
-WG_PORT="${WG_PORT:-51820}"
-
-# Generate WireGuard keypair using wicket-agent itself
+# ── Generate keypair ───────────────────────────────────────────────────────────
 info "Generating WireGuard keypair..."
-KEYGEN_OUTPUT=$(${INSTALL_DIR}/wicket-agent --generate-key 2>&1)
-PRIVATE_KEY=$(echo "${KEYGEN_OUTPUT}" | grep "^PRIVATE_KEY=" | cut -d= -f2)
-PUBLIC_KEY=$(echo "${KEYGEN_OUTPUT}" | grep "Public key:" | awk '''{print $NF}''')
-[ -z "${PRIVATE_KEY}" ] && error "Failed to generate WireGuard keypair"
+KEYGEN=$(${INSTALL_DIR}/wicket-agent -generate-key 2>&1)
+PRIVATE_KEY=$(echo "${KEYGEN}" | grep "^PRIVATE_KEY=" | cut -d= -f2-)
+PUBLIC_KEY=$(echo "${KEYGEN}" | grep "^Public key:" | awk '{print $NF}')
+[ -z "${PRIVATE_KEY}" ] && error "Failed to generate keypair"
 info "Public key: ${PUBLIC_KEY}"
 
-# Create systemd service
+# ── Interactive configuration (skipped if env vars set) ───────────────────────
+echo ""
+prompt "=== wicket-agent configuration ==="
+echo ""
+
+if [ -z "${AGENT_TOKEN:-}" ]; then
+    # Re-open stdin from terminal even if script was downloaded via curl
+    exec < /dev/tty
+    read -rp "$(echo -e "${BOLD}Agent token${NC} (from Wicket admin → Agents → Register): ")" AGENT_TOKEN
+fi
+[ -z "${AGENT_TOKEN}" ] && error "Token is required"
+
+if [ -z "${WICKET_ADMIN_URL:-}" ]; then
+    exec < /dev/tty
+    read -rp "$(echo -e "${BOLD}Wicket admin WebSocket URL${NC} [wss://` + serverURL[strings.Index(serverURL, "://")+3:] + `:9090]: ")" WICKET_ADMIN_URL
+    WICKET_ADMIN_URL="${WICKET_ADMIN_URL:-wss://` + serverURL[strings.Index(serverURL, "://")+3:] + `:9090}"
+fi
+
+if [ -z "${WG_IFACE:-}" ]; then
+    exec < /dev/tty
+    read -rp "$(echo -e "${BOLD}WireGuard interface${NC} [wg1]: ")" WG_IFACE
+    WG_IFACE="${WG_IFACE:-wg1}"
+fi
+
+if [ -z "${WG_PORT:-}" ]; then
+    exec < /dev/tty
+    read -rp "$(echo -e "${BOLD}WireGuard listen port${NC} [51820]: ")" WG_PORT
+    WG_PORT="${WG_PORT:-51820}"
+fi
+
+# ── Write private key file ─────────────────────────────────────────────────────
+KEY_FILE="/etc/wicket-agent.key"
+echo "${PRIVATE_KEY}" > "${KEY_FILE}"
+chmod 600 "${KEY_FILE}"
+info "Private key saved to ${KEY_FILE}"
+
+# ── Create systemd service ─────────────────────────────────────────────────────
 info "Creating systemd service..."
-cat > "/etc/systemd/system/${SERVICE_NAME}.service" << EOF
+cat > "/etc/systemd/system/${SERVICE_NAME}.service" << SYSTEMD_EOF
 [Unit]
 Description=Wicket VPN Agent
 After=network-online.target
@@ -223,19 +261,14 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=${INSTALL_DIR}/wicket-agent \
-    --server ${WICKET_SERVER} \
-    --token ${AGENT_TOKEN} \
-    --interface ${WG_IFACE} \
-    --listen-port ${WG_PORT} \
-    --private-key ${PRIVATE_KEY}
+EnvironmentFile=-/etc/wicket-agent.env
+ExecStart=${INSTALL_DIR}/wicket-agent -server ${WICKET_ADMIN_URL} -token ${AGENT_TOKEN} -interface ${WG_IFACE} -listen-port ${WG_PORT} -private-key ${PRIVATE_KEY}
 Restart=always
 RestartSec=10
-Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 [Install]
 WantedBy=multi-user.target
-EOF
+SYSTEMD_EOF
 
 systemctl daemon-reload
 systemctl enable "${SERVICE_NAME}"
@@ -243,11 +276,11 @@ systemctl start "${SERVICE_NAME}"
 
 echo ""
 info "wicket-agent installed and started!"
-info "Check status: systemctl status ${SERVICE_NAME}"
-info "View logs:    journalctl -u ${SERVICE_NAME} -f"
+info "  Status: systemctl status ${SERVICE_NAME}"
+info "  Logs:   journalctl -u ${SERVICE_NAME} -f"
 echo ""
 warning "Public key: ${PUBLIC_KEY}"
-warning "This key will be registered in Wicket automatically when the agent connects."
+warning "This is sent to Wicket automatically when the agent first connects."
 `
 }
 

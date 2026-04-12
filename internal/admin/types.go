@@ -7,12 +7,12 @@ import (
 )
 
 type AdminDashboardData struct {
-	Session          *portal.SessionData
-	PendingDevices   []*db.Device
-	ActiveSessions   []*db.Session
-	Agents           []*db.Agent
-	WSCounts         map[ws.ClientKind]int
-	AgentsConnected  int // number of agent WebSocket connections
+	Session         *portal.SessionData
+	PendingDevices  []*db.Device
+	ActiveSessions  []*db.Session
+	Agents          []*db.Agent
+	WSCounts        map[ws.ClientKind]int
+	AgentsConnected int // number of agent WebSocket connections
 }
 
 type AdminDevicesData struct {
@@ -21,8 +21,8 @@ type AdminDevicesData struct {
 }
 
 type AdminSessionsData struct {
-	Session        *portal.SessionData
-	Sessions       []*db.Session
+	Session         *portal.SessionData
+	Sessions        []*db.Session
 	ApprovedDevices []*db.Device // approved devices with no active session
 }
 
@@ -45,13 +45,14 @@ type AdminGroupsData struct {
 
 type AdminRoutesData struct {
 	Session *portal.SessionData
-	Routes []*db.Route
+	Routes  []*db.Route
 }
 
 type AdminAgentsData struct {
 	Session        *portal.SessionData
 	Agents         []*db.Agent
 	ConnectedCount int
+	PublicURL      string // for the agent install command hint
 }
 
 type AdminAuditData struct {
@@ -60,8 +61,7 @@ type AdminAuditData struct {
 }
 
 type AdminMetricsData struct {
-	Session        *portal.SessionData
-	Devices        []*db.Device
-	LatestMetrics  map[string]*db.MetricSnapshot // deviceID -> latest snapshot
+	Session       *portal.SessionData
+	Devices       []*db.Device
+	LatestMetrics map[string]*db.MetricSnapshot // deviceID -> latest snapshot
 }
-

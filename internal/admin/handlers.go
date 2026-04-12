@@ -782,6 +782,7 @@ func (h *Handler) agentsData(r *http.Request) AdminAgentsData {
 		Session:        portal.SessionFromContext(r.Context()),
 		Agents:         agents,
 		ConnectedCount: counts[ws.KindAgent],
+		PublicURL:      h.cfg.Server.ExternalURL,
 	}
 }
 

@@ -911,8 +911,10 @@ templ AgentsList(data AdminAgentsData) {
 			<h3>Register Agent</h3>
 			<p class="form-hint" style="margin-bottom:10px">The token is shown once. Store it securely.</p>
 			<div style="background:var(--bg-2,#f3f4f6);border-radius:6px;padding:10px 12px;margin-bottom:14px;font-size:12px">
-				<div style="color:var(--text-2);margin-bottom:4px;font-weight:500">Install on a remote server:</div>
-				<code style="word-break:break-all;color:var(--primary)">curl -fsSL https://your-domain/agent/install.sh | sudo bash</code>
+				<div style="color:var(--text-2);margin-bottom:4px;font-weight:500">Install on a remote server (run directly, not piped):</div>
+				<code style="word-break:break-all;color:var(--primary)">
+					curl -fsSL { data.PublicURL }/agent/install.sh -o install-agent.sh &amp;&amp; sudo bash install-agent.sh
+				</code>
 			</div>
 			<div id="agent-form-error" style="margin-bottom:8px"></div>
 			<form hx-post="/agents"
