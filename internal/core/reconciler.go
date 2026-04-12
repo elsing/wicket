@@ -165,7 +165,7 @@ func (r *Reconciler) markExpiredSessions(ctx context.Context) {
 func (r *Reconciler) removeExpiredPeers(ctx context.Context) {
 	// Find devices that are approved+active but have no valid active session —
 	// these peers should not be in WireGuard.
-	rows, err := r.db.ReadSQL().QueryContext(ctx, `
+	rows, err := r.db.SQL().QueryContext(ctx, `
 		SELECT DISTINCT d.id, d.public_key, d.name, u.email
 		FROM devices d
 		JOIN users u ON u.id = d.user_id
@@ -175,7 +175,7 @@ func (r *Reconciler) removeExpiredPeers(ctx context.Context) {
 		      SELECT 1 FROM sessions s
 		      WHERE s.device_id = d.id
 		        AND s.status = 'active'
-		        AND s.expires_at > ?
+		        AND s.expires_at > $1
 		  )
 	`, time.Now().UTC())
 	if err != nil {
@@ -273,11 +273,11 @@ func (r *Reconciler) ensureActivePeers(ctx context.Context) {
 	}
 
 	// Find devices with active sessions.
-	rows, err := r.db.ReadSQL().QueryContext(ctx, `
+	rows, err := r.db.SQL().QueryContext(ctx, `
 		SELECT d.id, d.public_key, d.assigned_ip, d.name, u.email,
 		       (SELECT s.expires_at FROM sessions s
 		        WHERE s.device_id = d.id AND s.status = 'active'
-		        AND s.expires_at > datetime('now') ORDER BY s.expires_at DESC LIMIT 1) AS expires_at
+		        AND s.expires_at > NOW() ORDER BY s.expires_at DESC LIMIT 1) AS expires_at
 		FROM devices d
 		JOIN users u ON u.id = d.user_id
 		WHERE d.is_approved = 1
@@ -286,7 +286,7 @@ func (r *Reconciler) ensureActivePeers(ctx context.Context) {
 		      SELECT 1 FROM sessions s
 		      WHERE s.device_id = d.id
 		        AND s.status = 'active'
-		        AND s.expires_at > ?
+		        AND s.expires_at > $1
 		  )
 	`, time.Now().UTC())
 	if err != nil {

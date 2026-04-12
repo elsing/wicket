@@ -8,42 +8,45 @@ import (
 
 func (d *DB) AddUserToGroup(ctx context.Context, userID, groupID string) error {
 	_, err := d.sql.ExecContext(ctx,
-		`INSERT OR IGNORE INTO user_groups (id, user_id, group_id, created_at) VALUES (?, ?, ?, ?)`,
+		`INSERT INTO user_groups (id, user_id, group_id, created_at) VALUES ($1, $2, $3, $4)
+		ON CONFLICT DO NOTHING ON CONFLICT DO NOTHING`,
 		newID(), userID, groupID, time.Now().UTC())
 	return err
 }
 
 func (d *DB) RemoveUserFromGroup(ctx context.Context, userID, groupID string) error {
-	_, err := d.sql.ExecContext(ctx, `DELETE FROM user_groups WHERE user_id = ? AND group_id = ?`, userID, groupID)
+	_, err := d.sql.ExecContext(ctx, `DELETE FROM user_groups WHERE user_id = $1 AND group_id = $2`, userID, groupID)
 	return err
 }
 
 func (d *DB) AddRouteToGroup(ctx context.Context, groupID, routeID string) error {
 	_, err := d.sql.ExecContext(ctx,
-		`INSERT OR IGNORE INTO group_subnets (id, group_id, route_id, created_at) VALUES (?, ?, ?, ?)`,
+		`INSERT INTO group_subnets (id, group_id, route_id, created_at) VALUES ($1, $2, $3, $4)
+		ON CONFLICT DO NOTHING ON CONFLICT DO NOTHING`,
 		newID(), groupID, routeID, time.Now().UTC())
 	return err
 }
 
 func (d *DB) RemoveRouteFromGroup(ctx context.Context, groupID, routeID string) error {
-	_, err := d.sql.ExecContext(ctx, `DELETE FROM group_subnets WHERE group_id = ? AND route_id = ?`, groupID, routeID)
+	_, err := d.sql.ExecContext(ctx, `DELETE FROM group_subnets WHERE group_id = $1 AND route_id = $2`, groupID, routeID)
 	return err
 }
 
 func (d *DB) AddSubnetToDevice(ctx context.Context, deviceID, routeID string) error {
 	_, err := d.sql.ExecContext(ctx,
-		`INSERT OR IGNORE INTO device_subnets (id, device_id, route_id, created_at) VALUES (?, ?, ?, ?)`,
+		`INSERT INTO device_subnets (id, device_id, route_id, created_at) VALUES ($1, $2, $3, $4)
+		ON CONFLICT DO NOTHING ON CONFLICT DO NOTHING`,
 		newID(), deviceID, routeID, time.Now().UTC())
 	return err
 }
 
 func (d *DB) RemoveSubnetFromDevice(ctx context.Context, deviceID, routeID string) error {
-	_, err := d.sql.ExecContext(ctx, `DELETE FROM device_subnets WHERE device_id = ? AND route_id = ?`, deviceID, routeID)
+	_, err := d.sql.ExecContext(ctx, `DELETE FROM device_subnets WHERE device_id = $1 AND route_id = $2`, deviceID, routeID)
 	return err
 }
 
 func (d *DB) DeleteRoute(ctx context.Context, id string) error {
-	result, err := d.sql.ExecContext(ctx, `DELETE FROM subnets WHERE id = ?`, id)
+	result, err := d.sql.ExecContext(ctx, `DELETE FROM subnets WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("deleting subnet: %w", err)
 	}
@@ -55,14 +58,14 @@ func (d *DB) DeleteRoute(ctx context.Context, id string) error {
 }
 
 func (d *DB) DeactivateAgent(ctx context.Context, id string) error {
-	_, err := d.sql.ExecContext(ctx, `UPDATE agents SET is_active = 0 WHERE id = ?`, id)
+	_, err := d.sql.ExecContext(ctx, `UPDATE agents SET is_active = FALSE WHERE id = $1`, id)
 	return err
 }
 
 // DeleteAgent permanently removes an agent and its group assignments.
-// Only call on revoked (is_active=0) agents.
+// Only call on revoked (is_active = FALSE) agents.
 func (d *DB) DeleteAgent(ctx context.Context, id string) error {
-	_, err := d.sql.ExecContext(ctx, `DELETE FROM agents WHERE id = ? AND is_active = 0`, id)
+	_, err := d.sql.ExecContext(ctx, `DELETE FROM agents WHERE id = $1 AND is_active = FALSE`, id)
 	return err
 }
 
@@ -72,8 +75,8 @@ func (d *DB) DeleteAgent(ctx context.Context, id string) error {
 
 // GetLocalAdminByUsername returns a local admin account by username.
 func (d *DB) GetLocalAdminByUsername(ctx context.Context, username string) (*LocalAdmin, error) {
-	row := d.reader.QueryRowContext(ctx,
-		`SELECT id, username, password_hash, created_at FROM local_admins WHERE username = ?`, username)
+	row := d.sql.QueryRowContext(ctx,
+		`SELECT id, username, password_hash, created_at FROM local_admins WHERE username = $1`, username)
 	var a LocalAdmin
 	err := row.Scan(&a.ID, &a.Username, &a.PasswordHash, &a.CreatedAt)
 	if err != nil {
@@ -85,14 +88,15 @@ func (d *DB) GetLocalAdminByUsername(ctx context.Context, username string) (*Loc
 // CreateLocalAdmin inserts a new local admin account with a bcrypt-hashed password.
 func (d *DB) CreateLocalAdmin(ctx context.Context, username, passwordHash string) error {
 	_, err := d.sql.ExecContext(ctx,
-		`INSERT INTO local_admins (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)`,
+		`INSERT INTO local_admins (id, username, password_hash, created_at) VALUES ($1, $2, $3, $4)
+		ON CONFLICT DO NOTHING ON CONFLICT DO NOTHING`,
 		newID(), username, passwordHash, time.Now().UTC())
 	return err
 }
 
 // DeleteDevice removes a device and all its sessions and subnet assignments.
 func (d *DB) DeleteDevice(ctx context.Context, id string) error {
-	_, err := d.sql.ExecContext(ctx, `DELETE FROM devices WHERE id = ?`, id)
+	_, err := d.sql.ExecContext(ctx, `DELETE FROM devices WHERE id = $1`, id)
 	return err
 }
 
@@ -100,20 +104,20 @@ func (d *DB) DeleteDevice(ctx context.Context, id string) error {
 func (d *DB) DeleteGroup(ctx context.Context, id string) error {
 	// Check for devices first
 	var count int
-	if err := d.reader.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM devices WHERE group_id = ?`, id).Scan(&count); err != nil {
+	if err := d.sql.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM devices WHERE group_id = $1`, id).Scan(&count); err != nil {
 		return err
 	}
 	if count > 0 {
 		return fmt.Errorf("cannot delete group: %d device(s) still assigned to it", count)
 	}
-	_, err := d.sql.ExecContext(ctx, `DELETE FROM groups WHERE id = ?`, id)
+	_, err := d.sql.ExecContext(ctx, `DELETE FROM groups WHERE id = $1`, id)
 	return err
 }
 
 // ListGroupRoutes returns a map of groupID -> []routeID for all groups.
 func (d *DB) ListGroupRoutes(ctx context.Context) (map[string][]string, error) {
-	rows, err := d.reader.QueryContext(ctx, `SELECT group_id, route_id FROM group_subnets`)
+	rows, err := d.sql.QueryContext(ctx, `SELECT group_id, route_id FROM group_subnets`)
 	if err != nil {
 		return nil, err
 	}
@@ -131,8 +135,8 @@ func (d *DB) ListGroupRoutes(ctx context.Context) (map[string][]string, error) {
 
 // GetLocalAdminByID returns a local admin account by ID.
 func (d *DB) GetLocalAdminByID(ctx context.Context, id string) (*LocalAdmin, error) {
-	row := d.reader.QueryRowContext(ctx,
-		`SELECT id, username, password_hash, created_at FROM local_admins WHERE id = ?`, id)
+	row := d.sql.QueryRowContext(ctx,
+		`SELECT id, username, password_hash, created_at FROM local_admins WHERE id = $1`, id)
 	var a LocalAdmin
 	err := row.Scan(&a.ID, &a.Username, &a.PasswordHash, &a.CreatedAt)
 	if err != nil {
@@ -145,11 +149,11 @@ func (d *DB) GetLocalAdminByID(ctx context.Context, id string) (*LocalAdmin, err
 // keeping only the most recent one. Used to clean up duplicate sessions.
 func (d *DB) RevokeAllSessionsForDevice(ctx context.Context, deviceID string) (int64, error) {
 	result, err := d.sql.ExecContext(ctx, `
-		UPDATE sessions SET status = 'revoked', revoked_at = ?, revoked_by = 'system:cleanup'
-		WHERE device_id = ? AND status = 'active'
+		UPDATE sessions SET status = 'revoked', revoked_at = $1, revoked_by = 'system:cleanup'
+		WHERE device_id = $2 AND status = 'active'
 		  AND id NOT IN (
 		      SELECT id FROM sessions
-		      WHERE device_id = ? AND status = 'active'
+		      WHERE device_id = $3 AND status = 'active'
 		      ORDER BY authed_at DESC LIMIT 1
 		  )
 	`, time.Now().UTC(), deviceID, deviceID)
@@ -163,7 +167,7 @@ func (d *DB) RevokeAllSessionsForDevice(ctx context.Context, deviceID string) (i
 // keeping only the most recent session per device.
 func (d *DB) DeduplicateSessions(ctx context.Context) (int64, error) {
 	result, err := d.sql.ExecContext(ctx, `
-		UPDATE sessions SET status = 'revoked', revoked_at = ?, revoked_by = 'system:cleanup'
+		UPDATE sessions SET status = 'revoked', revoked_at = $1, revoked_by = 'system:cleanup'
 		WHERE status = 'active'
 		  AND id NOT IN (
 		      SELECT id FROM (
@@ -180,7 +184,7 @@ func (d *DB) DeduplicateSessions(ctx context.Context) (int64, error) {
 
 // GetLatestMetricPerDevice returns the most recent snapshot for each device.
 func (d *DB) GetLatestMetricPerDevice(ctx context.Context) (map[string]*MetricSnapshot, error) {
-	rows, err := d.reader.QueryContext(ctx, `
+	rows, err := d.sql.QueryContext(ctx, `
 		SELECT m.id, m.device_id, m.bytes_sent, m.bytes_received, m.last_handshake, m.recorded_at
 		FROM metric_snapshots m
 		INNER JOIN (
@@ -207,10 +211,10 @@ func (d *DB) GetLatestMetricPerDevice(ctx context.Context) (map[string]*MetricSn
 
 // DeviceCountPerGroup returns a map of groupID -> count of approved devices.
 func (d *DB) DeviceCountPerGroup(ctx context.Context) (map[string]int, error) {
-	rows, err := d.reader.QueryContext(ctx, `
+	rows, err := d.sql.QueryContext(ctx, `
 		SELECT group_id, COUNT(*) as cnt
 		FROM devices
-		WHERE is_approved = 1
+		WHERE is_approved = TRUE
 		GROUP BY group_id
 	`)
 	if err != nil {
@@ -237,9 +241,9 @@ func (d *DB) UpdateGroup(ctx context.Context, id, name, description string, sess
 		maxExt = *maxExtensions
 	}
 	_, err := d.sql.ExecContext(ctx, `
-		UPDATE groups SET name = ?, description = ?, session_duration = ?, max_extensions = ?,
-		                  endpoint_override = ?, is_public = ?
-		WHERE id = ?
+		UPDATE groups SET name = $1, description = $2, session_duration = $3, max_extensions = $4,
+		                  endpoint_override = $5, is_public = $6
+		WHERE id = $7
 	`, name, description, int64(sessionDuration.Seconds()), maxExt, endpointOverride, isPublic, id)
 	return err
 }
@@ -247,7 +251,8 @@ func (d *DB) UpdateGroup(ctx context.Context, id, name, description string, sess
 // AssignAgentToGroup adds an agent to a group's agent list.
 func (d *DB) AssignAgentToGroup(ctx context.Context, groupID, agentID string) error {
 	_, err := d.sql.ExecContext(ctx,
-		`INSERT OR IGNORE INTO group_agents (group_id, agent_id) VALUES (?, ?)`,
+		`INSERT INTO group_agents (group_id, agent_id) VALUES ($1, $2)
+		ON CONFLICT DO NOTHING ON CONFLICT DO NOTHING`,
 		groupID, agentID)
 	return err
 }
@@ -255,19 +260,19 @@ func (d *DB) AssignAgentToGroup(ctx context.Context, groupID, agentID string) er
 // RemoveAgentFromGroup removes an agent from a group.
 func (d *DB) RemoveAgentFromGroup(ctx context.Context, groupID, agentID string) error {
 	_, err := d.sql.ExecContext(ctx,
-		`DELETE FROM group_agents WHERE group_id = ? AND agent_id = ?`,
+		`DELETE FROM group_agents WHERE group_id = $1 AND agent_id = $2`,
 		groupID, agentID)
 	return err
 }
 
 // GetGroupAgents returns all agents assigned to a group.
 func (d *DB) GetGroupAgents(ctx context.Context, groupID string) ([]*Agent, error) {
-	rows, err := d.reader.QueryContext(ctx, `
+	rows, err := d.sql.QueryContext(ctx, `
 		SELECT a.id, a.name, a.description, a.token, a.vpn_pool, a.endpoint, a.wg_public_key,
 		       a.is_active, a.last_seen_at, a.created_at
 		FROM agents a
 		INNER JOIN group_agents ga ON ga.agent_id = a.id
-		WHERE ga.group_id = ?
+		WHERE ga.group_id = $1
 	`, groupID)
 	if err != nil {
 		return nil, err
@@ -287,7 +292,7 @@ func (d *DB) GetGroupAgents(ctx context.Context, groupID string) ([]*Agent, erro
 
 // GetGroupAgentMap returns a map of groupID -> []agentID for all groups.
 func (d *DB) GetGroupAgentMap(ctx context.Context) (map[string][]string, error) {
-	rows, err := d.reader.QueryContext(ctx, `SELECT group_id, agent_id FROM group_agents`)
+	rows, err := d.sql.QueryContext(ctx, `SELECT group_id, agent_id FROM group_agents`)
 	if err != nil {
 		return nil, err
 	}
@@ -306,17 +311,17 @@ func (d *DB) GetGroupAgentMap(ctx context.Context) (map[string][]string, error) 
 // UpdateAgentDetails updates an agent's name, description, vpn_pool and endpoint.
 func (d *DB) UpdateAgentDetails(ctx context.Context, id, name, description, vpnPool, endpoint string) error {
 	_, err := d.sql.ExecContext(ctx,
-		`UPDATE agents SET name=?, description=?, vpn_pool=?, endpoint=? WHERE id=?`,
+		`UPDATE agents SET name=$1, description=$2, vpn_pool=$3, endpoint=$4 WHERE id=$5`,
 		name, description, vpnPool, endpoint, id) // wg_public_key updated via UpdateAgentPublicKey
 	return err
 }
 
 // GetAgentByID returns a single agent by ID.
 func (d *DB) GetAgentByID(ctx context.Context, id string) (*Agent, error) {
-	row := d.reader.QueryRowContext(ctx, `
+	row := d.sql.QueryRowContext(ctx, `
 		SELECT id, name, description, token, vpn_pool, endpoint, wg_public_key,
 		       is_active, last_seen_at, created_at
-		FROM agents WHERE id = ?`, id)
+		FROM agents WHERE id = $1`, id)
 	var a Agent
 	err := row.Scan(&a.ID, &a.Name, &a.Description, &a.TokenHash,
 		&a.VPNPool, &a.Endpoint, &a.WGPublicKey, &a.IsActive, &a.LastSeenAt, &a.CreatedAt)
@@ -330,6 +335,6 @@ func (d *DB) GetAgentByID(ctx context.Context, id string) (*Agent, error) {
 // Called when the agent connects and sends its public key in the ready message.
 func (d *DB) UpdateAgentPublicKey(ctx context.Context, agentID, pubKey string) error {
 	_, err := d.sql.ExecContext(ctx,
-		`UPDATE agents SET wg_public_key = ? WHERE id = ?`, pubKey, agentID)
+		`UPDATE agents SET wg_public_key = $1 WHERE id = $2`, pubKey, agentID)
 	return err
 }
