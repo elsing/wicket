@@ -15,13 +15,13 @@ import (
 var migrationsFS embed.FS
 
 // DB wraps two sql.DB pools:
-//   - writer: single connection, serialises all writes, no SQLITE_BUSY contention
-//   - reader: multiple connections, allows concurrent reads without blocking writes
+//   - sql:    single write connection, serialises all writes, no SQLITE_BUSY contention
+//   - reader: multiple read connections, concurrent SELECTs without blocking writes
 //
 // WAL journal mode makes this work: readers never block writers and vice versa.
 type DB struct {
-	sql    *sql.DB // writer — also used for migrations and the SQL() accessor
-	reader *sql.DB // read pool — used for SELECT queries
+	sql    *sql.DB // writer — 1 connection
+	reader *sql.DB // readers — up to 8 connections
 }
 
 // Open opens (or creates) the SQLite database at path, applies all pending
@@ -32,11 +32,8 @@ func Open(path string) (*DB, error) {
 		path,
 	)
 
-	// Writer pool: single connection serialises all writes.
-	// No _txlock=immediate — not needed with one connection.
-	// Short busy timeout: with one writer it should almost never trigger.
-	writerDSN := baseDSN + "&_busy_timeout=10000"
-	writer, err := sql.Open("sqlite", writerDSN)
+	// Writer: single connection serialises all writes. No SQLITE_BUSY contention.
+	writer, err := sql.Open("sqlite", baseDSN+"&_busy_timeout=10000")
 	if err != nil {
 		return nil, fmt.Errorf("opening sqlite writer: %w", err)
 	}
@@ -44,17 +41,15 @@ func Open(path string) (*DB, error) {
 	writer.SetMaxIdleConns(1)
 
 	if err := writer.Ping(); err != nil {
-		return nil, fmt.Errorf("pinging sqlite: %w", err)
+		return nil, fmt.Errorf("pinging sqlite writer: %w", err)
 	}
-
 	if err := runMigrations(writer); err != nil {
 		return nil, fmt.Errorf("running migrations: %w", err)
 	}
 
-	// Reader pool: multiple connections for concurrent SELECTs.
+	// Reader: multiple connections for concurrent SELECTs.
 	// WAL mode means readers never see partial writes and never block the writer.
-	readerDSN := baseDSN + "&_busy_timeout=5000&mode=ro"
-	reader, err := sql.Open("sqlite", readerDSN)
+	reader, err := sql.Open("sqlite", baseDSN+"&_busy_timeout=5000&mode=ro")
 	if err != nil {
 		return nil, fmt.Errorf("opening sqlite reader: %w", err)
 	}
@@ -68,17 +63,14 @@ func Open(path string) (*DB, error) {
 	return &DB{sql: writer, reader: reader}, nil
 }
 
-// Close closes both database connections.
-func (d *DB) Close() error {
-	_ = d.reader.Close()
-	return d.sql.Close()
-}
+// Close closes the underlying database connection.
+func (d *DB) Close() error { return d.sql.Close() }
 
-// SQL returns the writer *sql.DB for complex write queries and transactions.
+// SQL returns the underlying *sql.DB for complex write queries.
 func (d *DB) SQL() *sql.DB { return d.sql }
 
-// ReadSQL returns the reader *sql.DB for complex SELECT queries.
-func (d *DB) ReadSQL() *sql.DB { return d.reader }
+// ReadSQL returns the same pool — kept for API compatibility.
+func (d *DB) ReadSQL() *sql.DB { return d.sql }
 
 // Ping checks the database is reachable.
 func (d *DB) Ping() error { return d.sql.Ping() }

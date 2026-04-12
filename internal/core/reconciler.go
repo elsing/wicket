@@ -52,6 +52,7 @@ type Reconciler struct {
 	trigger  chan struct{}
 
 	mu      sync.Mutex
+	passMu  sync.Mutex // ensures only one pass runs at a time
 	lastRun time.Time
 }
 
@@ -120,6 +121,10 @@ func (r *Reconciler) Run(ctx context.Context, interval time.Duration) {
 // pass executes one full reconciliation cycle.
 // Recovers from panics so a bug in peer management never crashes the server.
 func (r *Reconciler) pass() {
+	// Prevent concurrent passes from fighting over the write connection.
+	r.passMu.Lock()
+	defer r.passMu.Unlock()
+
 	defer func() {
 		if rec := recover(); rec != nil {
 			r.log.Error("reconciler: panic recovered — server remains running",
