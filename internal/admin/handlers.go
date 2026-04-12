@@ -97,9 +97,6 @@ func NewHandler(
 	// Health — unauthenticated
 	r.Get("/health", h.handleHealth)
 
-	// Agent WebSocket — token auth, no session cookie required
-	r.Get("/agent/connect", h.handleAgentConnect)
-
 	// Auth routes — OIDC and local fallback
 	r.Get("/auth/login", h.handleLoginPage)
 	r.Get("/auth/sso", h.handleSSO)
@@ -819,44 +816,6 @@ func (h *Handler) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 	h.svc.WriteAdminAuditLog(r.Context(), sessA.UserID, db.AuditEventAgentCreated, clientIP(r), name)
 	w.Header().Set("HX-Trigger", `{"refreshAgentsList": true}`)
 	renderAgentToken(w, r, agent, token)
-}
-
-func (h *Handler) handleAgentConnect(w http.ResponseWriter, r *http.Request) {
-	// Agents authenticate with "Authorization: Bearer <token>" header.
-	token := ""
-	if auth := r.Header.Get("Authorization"); len(auth) > 7 && auth[:7] == "Bearer " {
-		token = auth[7:]
-	}
-	if token == "" {
-		http.Error(w, "missing token", http.StatusUnauthorized)
-		return
-	}
-
-	agentRecord, err := h.svc.VerifyAgentToken(r.Context(), token)
-	if err != nil {
-		http.Error(w, "invalid token", http.StatusUnauthorized)
-		return
-	}
-	if !agentRecord.IsActive {
-		http.Error(w, "agent revoked", http.StatusForbidden)
-		return
-	}
-
-	// Build the full sync payload for this agent.
-	syncPayload, err := agenthub.BuildSyncPayload(
-		r.Context(),
-		h.svc.DB(),
-		agentRecord.ID,
-		agentRecord.VPNPool, // used as WG interface name hint
-		"",                  // private key managed by agent itself
-		h.svc.Config().WireGuard.ListenPort,
-	)
-	if err != nil {
-		h.log.Warn("building agent sync payload", zap.Error(err))
-		// Still connect — send empty sync
-	}
-
-	h.agentHub.HandleConnect(w, r, agentRecord.ID, syncPayload)
 }
 
 func (h *Handler) handleDeleteAgent(w http.ResponseWriter, r *http.Request) {

@@ -38,7 +38,49 @@ var (
 	version           = "dev"
 )
 
+// removeAgent uninstalls the agent: stops the service, removes the binary and key file.
+func removeAgent() {
+	fmt.Println("[wicket-agent] Removing wicket-agent...")
+
+	steps := [][]string{
+		{"systemctl", "stop", "wicket-agent"},
+		{"systemctl", "disable", "wicket-agent"},
+		{"systemctl", "daemon-reload"},
+	}
+
+	for _, args := range steps {
+		if err := exec.Command(args[0], args[1:]...).Run(); err != nil {
+			// Non-fatal — service may not be installed
+			fmt.Printf("[wicket-agent] Note: %s: %v\n", args[0], err)
+		}
+	}
+
+	files := []string{
+		"/etc/systemd/system/wicket-agent.service",
+		"/usr/local/bin/wicket-agent",
+		"/etc/wicket-agent.key",
+	}
+
+	for _, f := range files {
+		if err := os.Remove(f); err != nil && !os.IsNotExist(err) {
+			fmt.Printf("[wicket-agent] Could not remove %s: %v\n", f, err)
+		} else if err == nil {
+			fmt.Printf("[wicket-agent] Removed %s\n", f)
+		}
+	}
+
+	fmt.Println("[wicket-agent] Removed.")
+	fmt.Println("[wicket-agent] Note: WireGuard interface may still be up.")
+	fmt.Println("[wicket-agent] To remove it: ip link delete <interface>")
+}
+
 func main() {
+	// Handle subcommands before flag parsing
+	if len(os.Args) > 1 && os.Args[1] == "remove" {
+		removeAgent()
+		return
+	}
+
 	flag.Parse()
 
 	// --generate-key: print a new private key and exit (used by install scripts)
