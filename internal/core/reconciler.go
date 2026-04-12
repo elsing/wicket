@@ -272,7 +272,7 @@ func (r *Reconciler) ensureActivePeers(ctx context.Context) {
 		SELECT d.id, d.public_key, d.assigned_ip, d.name, u.email,
 		       (SELECT s.expires_at FROM sessions s
 		        WHERE s.device_id = d.id AND s.status = 'active'
-		        AND s.expires_at > ? ORDER BY s.expires_at DESC LIMIT 1) AS expires_at
+		        AND s.expires_at > datetime('now') ORDER BY s.expires_at DESC LIMIT 1) AS expires_at
 		FROM devices d
 		JOIN users u ON u.id = d.user_id
 		WHERE d.is_approved = 1
