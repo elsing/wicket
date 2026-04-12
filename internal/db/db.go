@@ -64,6 +64,81 @@ func (d *DB) Ping() error { return d.sql.Ping() }
 
 // runMigrations applies .up.sql files from the embedded migrations directory
 // that have not yet been applied. Tracks state in a schema_migrations table.
+// execMigration runs each statement in a migration individually.
+// ALTER TABLE ADD COLUMN statements are skipped if the column already exists,
+// which makes migrations safe to apply against DBs that were partially migrated
+// or had columns added outside of the migration system.
+func execMigration(db *sql.DB, sql string) error {
+	// Split on semicolons to get individual statements.
+	stmts := splitStatements(sql)
+	for _, stmt := range stmts {
+		stmt = strings.TrimSpace(stmt)
+		if stmt == "" || strings.HasPrefix(stmt, "--") {
+			continue
+		}
+		// For ALTER TABLE ADD COLUMN, check if the column already exists.
+		if isAddColumn(stmt) {
+			table, col := parseAddColumn(stmt)
+			if table != "" && col != "" {
+				exists, err := columnExists(db, table, col)
+				if err != nil {
+					return err
+				}
+				if exists {
+					continue // already present — skip
+				}
+			}
+		}
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("executing %q: %w", truncate(stmt, 60), err)
+		}
+	}
+	return nil
+}
+
+func splitStatements(sql string) []string {
+	// Simple split on semicolons. Doesn't handle semicolons inside strings,
+	// but our migrations don't have those.
+	var stmts []string
+	for _, s := range strings.Split(sql, ";") {
+		s = strings.TrimSpace(s)
+		if s != "" {
+			stmts = append(stmts, s)
+		}
+	}
+	return stmts
+}
+
+func isAddColumn(stmt string) bool {
+	upper := strings.ToUpper(strings.TrimSpace(stmt))
+	return strings.HasPrefix(upper, "ALTER TABLE") && strings.Contains(upper, "ADD COLUMN")
+}
+
+func parseAddColumn(stmt string) (table, column string) {
+	// ALTER TABLE <table> ADD COLUMN <col> ...
+	words := strings.Fields(stmt)
+	if len(words) >= 5 {
+		return words[2], words[4]
+	}
+	return "", ""
+}
+
+func columnExists(db *sql.DB, table, column string) (bool, error) {
+	rows, err := db.Query(`SELECT 1 FROM pragma_table_info(?) WHERE name = ?`, table, column)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	return rows.Next(), rows.Err()
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
+}
+
 func runMigrations(db *sql.DB) error {
 	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
 		version TEXT NOT NULL PRIMARY KEY,
@@ -100,7 +175,7 @@ func runMigrations(db *sql.DB) error {
 			return fmt.Errorf("reading migration %s: %w", name, err)
 		}
 
-		if _, err := db.Exec(string(content)); err != nil {
+		if err := execMigration(db, string(content)); err != nil {
 			return fmt.Errorf("applying migration %s: %w", name, err)
 		}
 
