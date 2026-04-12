@@ -116,9 +116,10 @@ func isAddColumn(stmt string) bool {
 
 func parseAddColumn(stmt string) (table, column string) {
 	// ALTER TABLE <table> ADD COLUMN <col> ...
+	// indices: 0=ALTER 1=TABLE 2=<table> 3=ADD 4=COLUMN 5=<col>
 	words := strings.Fields(stmt)
-	if len(words) >= 5 {
-		return words[2], words[4]
+	if len(words) >= 6 {
+		return words[2], words[5]
 	}
 	return "", ""
 }
