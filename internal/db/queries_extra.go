@@ -235,16 +235,16 @@ func (d *DB) DeviceCountPerGroup(ctx context.Context) (map[string]int, error) {
 
 // UpdateGroup updates a group's name, description, session duration, max extensions,
 // routing mode and endpoint override.
-func (d *DB) UpdateGroup(ctx context.Context, id, name, description string, sessionDuration time.Duration, maxExtensions *int64, endpointOverride string, isPublic bool) error {
+func (d *DB) UpdateGroup(ctx context.Context, id, name, description string, sessionDuration time.Duration, maxExtensions *int64, endpointOverride string, isPublic bool, dns string) error {
 	var maxExt interface{}
 	if maxExtensions != nil {
 		maxExt = *maxExtensions
 	}
 	_, err := d.sql.ExecContext(ctx, `
 		UPDATE groups SET name = $1, description = $2, session_duration = $3, max_extensions = $4,
-		                  endpoint_override = $5, is_public = $6
-		WHERE id = $7
-	`, name, description, int64(sessionDuration.Seconds()), maxExt, endpointOverride, isPublic, id)
+		                  endpoint_override = $5, is_public = $6, dns = $7
+		WHERE id = $8
+	`, name, description, int64(sessionDuration.Seconds()), maxExt, endpointOverride, isPublic, dns, id)
 	return err
 }
 
@@ -254,6 +254,13 @@ func (d *DB) AssignAgentToGroup(ctx context.Context, groupID, agentID string) er
 		`INSERT INTO group_agents (group_id, agent_id) VALUES ($1, $2)
 		ON CONFLICT DO NOTHING`,
 		groupID, agentID)
+	return err
+}
+
+// ClearGroupAgents removes all agents from a group (enforces one-agent-per-group).
+func (d *DB) ClearGroupAgents(ctx context.Context, groupID string) error {
+	_, err := d.sql.ExecContext(ctx,
+		`DELETE FROM group_agents WHERE group_id = $1`, groupID)
 	return err
 }
 

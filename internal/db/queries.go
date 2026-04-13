@@ -85,12 +85,8 @@ func (d *DB) ListUsers(ctx context.Context) ([]*User, error) {
 
 // SetUserAdmin sets the is_admin flag. Uses 1/0 explicitly for SQLite compatibility.
 func (d *DB) SetUserAdmin(ctx context.Context, userID string, admin bool) error {
-	val := 0
-	if admin {
-		val = 1
-	}
 	result, err := d.sql.ExecContext(ctx,
-		`UPDATE users SET is_admin = $1 WHERE id = $2`, val, userID)
+		`UPDATE users SET is_admin = $1 WHERE id = $2`, admin, userID)
 	if err != nil {
 		return fmt.Errorf("setting admin flag: %w", err)
 	}
@@ -137,7 +133,7 @@ func scanUsers(rows *sql.Rows) ([]*User, error) {
 func (d *DB) GetGroupByID(ctx context.Context, id string) (*Group, error) {
 	row := d.sql.QueryRowContext(ctx,
 		`SELECT id, name, description, session_duration, max_extensions, is_public,
-		        endpoint_override, created_at, updated_at
+		        endpoint_override, dns, created_at, updated_at
 		 FROM groups WHERE id = $1`, id)
 	return scanGroup(row)
 }
@@ -145,7 +141,7 @@ func (d *DB) GetGroupByID(ctx context.Context, id string) (*Group, error) {
 func (d *DB) ListGroups(ctx context.Context) ([]*Group, error) {
 	rows, err := d.sql.QueryContext(ctx,
 		`SELECT id, name, description, session_duration, max_extensions, is_public,
-		        endpoint_override, created_at, updated_at
+		        endpoint_override, dns, created_at, updated_at
 		 FROM groups ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -158,7 +154,7 @@ func (d *DB) ListGroupsForUser(ctx context.Context, userID string) ([]*Group, er
 	rows, err := d.sql.QueryContext(ctx, `
 		SELECT DISTINCT g.id, g.name, g.description, g.session_duration,
 		                g.max_extensions, g.is_public, g.endpoint_override,
-		                g.created_at, g.updated_at
+		                g.dns, g.created_at, g.updated_at
 		FROM groups g
 		LEFT JOIN user_groups ug ON ug.group_id = g.id AND ug.user_id = $1
 		WHERE g.is_public = TRUE OR ug.user_id IS NOT NULL
@@ -192,7 +188,7 @@ func scanGroup(row *sql.Row) (*Group, error) {
 	err := row.Scan(
 		&g.ID, &g.Name, &g.Description, &sessionSecs,
 		&g.MaxExtensions, &g.IsPublic,
-		&g.EndpointOverride,
+		&g.EndpointOverride, &g.DNS,
 		&g.CreatedAt, &g.UpdatedAt,
 	)
 	if err != nil {
@@ -210,7 +206,7 @@ func scanGroups(rows *sql.Rows) ([]*Group, error) {
 		if err := rows.Scan(
 			&g.ID, &g.Name, &g.Description, &sessionSecs,
 			&g.MaxExtensions, &g.IsPublic,
-			&g.EndpointOverride,
+			&g.EndpointOverride, &g.DNS,
 			&g.CreatedAt, &g.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -227,13 +223,13 @@ func scanGroups(rows *sql.Rows) ([]*Group, error) {
 
 func (d *DB) GetRouteByID(ctx context.Context, id string) (*Route, error) {
 	row := d.sql.QueryRowContext(ctx,
-		`SELECT id, name, cidr, description, created_at, updated_at FROM subnets WHERE id = $1`, id)
+		`SELECT id, name, cidr, description, is_excluded, created_at, updated_at FROM subnets WHERE id = $1`, id)
 	return scanRoute(row)
 }
 
 func (d *DB) ListRoutes(ctx context.Context) ([]*Route, error) {
 	rows, err := d.sql.QueryContext(ctx,
-		`SELECT id, name, cidr, description, created_at, updated_at FROM subnets ORDER BY name`)
+		`SELECT id, name, cidr, description, is_excluded, created_at, updated_at FROM subnets ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -276,7 +272,7 @@ func (d *DB) ListRoutesForDevice(ctx context.Context, deviceID string) ([]*Route
 	return scanRoutes(rows2)
 }
 
-func (d *DB) CreateRoute(ctx context.Context, name, cidr, description string) (*Route, error) {
+func (d *DB) CreateRoute(ctx context.Context, name, cidr, description string, isExcluded bool) (*Route, error) {
 	id := newID()
 	now := time.Now().UTC()
 	_, err := d.sql.ExecContext(ctx,
@@ -292,14 +288,14 @@ func (d *DB) CreateRoute(ctx context.Context, name, cidr, description string) (*
 
 func scanRoute(row *sql.Row) (*Route, error) {
 	var s Route
-	return &s, row.Scan(&s.ID, &s.Name, &s.CIDR, &s.Description, &s.CreatedAt, &s.UpdatedAt)
+	return &s, row.Scan(&s.ID, &s.Name, &s.CIDR, &s.Description, &s.IsExcluded, &s.CreatedAt, &s.UpdatedAt)
 }
 
 func scanRoutes(rows *sql.Rows) ([]*Route, error) {
 	var routes []*Route
 	for rows.Next() {
 		var s Route
-		if err := rows.Scan(&s.ID, &s.Name, &s.CIDR, &s.Description, &s.CreatedAt, &s.UpdatedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.Name, &s.CIDR, &s.Description, &s.IsExcluded, &s.CreatedAt, &s.UpdatedAt); err != nil {
 			return nil, err
 		}
 		routes = append(routes, &s)
@@ -478,21 +474,26 @@ func (d *DB) RejectDevice(ctx context.Context, id string) error {
 	return err
 }
 
-func (d *DB) SetDeviceActive(ctx context.Context, id string, active bool) error {
-	val := 0
-	if active {
-		val = 1
+func (d *DB) RenameDevice(ctx context.Context, deviceID, name string) error {
+	result, err := d.sql.ExecContext(ctx,
+		`UPDATE devices SET name = $1 WHERE id = $2`, name, deviceID)
+	if err != nil {
+		return err
 	}
-	_, err := d.sql.ExecContext(ctx, `UPDATE devices SET is_active = $1 WHERE id = $2`, val, id)
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("device not found")
+	}
+	return nil
+}
+
+func (d *DB) SetDeviceActive(ctx context.Context, id string, active bool) error {
+	_, err := d.sql.ExecContext(ctx, `UPDATE devices SET is_active = $1 WHERE id = $2`, active, id)
 	return err
 }
 
 func (d *DB) SetDeviceAutoRenew(ctx context.Context, id string, autoRenew bool) error {
-	val := 0
-	if autoRenew {
-		val = 1
-	}
-	_, err := d.sql.ExecContext(ctx, `UPDATE devices SET auto_renew = $1 WHERE id = $2`, val, id)
+	_, err := d.sql.ExecContext(ctx, `UPDATE devices SET auto_renew = $1 WHERE id = $2`, autoRenew, id)
 	return err
 }
 
@@ -664,7 +665,6 @@ func scanSession(row *sql.Row) (*Session, error) {
 	}
 	return &s, err
 }
-
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Agents

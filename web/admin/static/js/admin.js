@@ -1,3 +1,43 @@
+// ── Device inline rename ──────────────────────────────────────────────────────
+document.addEventListener('click', function(e) {
+  // Click on name span → show form, hide span
+  const nameSpan = e.target.closest('[data-rename-device]');
+  if (nameSpan) {
+    const id = nameSpan.dataset.renameDevice;
+    nameSpan.style.display = 'none';
+    const form = document.getElementById('dev-rename-form-' + id);
+    if (form) {
+      form.style.display = 'inline-flex';
+      form.querySelector('input').focus();
+      form.querySelector('input').select();
+    }
+    return;
+  }
+  // Cancel button → hide form, show span
+  const cancelBtn = e.target.closest('[data-cancel-rename]');
+  if (cancelBtn) {
+    const id = cancelBtn.dataset.cancelRename;
+    const form = document.getElementById('dev-rename-form-' + id);
+    const span = document.getElementById('dev-name-' + id);
+    if (form) form.style.display = 'none';
+    if (span) span.style.display = '';
+  }
+});
+
+// Escape key cancels rename
+document.addEventListener('keydown', function(e) {
+  if (e.key !== 'Escape') return;
+  document.querySelectorAll('[id^="dev-rename-form-"]').forEach(form => {
+    if (form.style.display !== 'none') {
+      const id = form.id.replace('dev-rename-form-', '');
+      form.style.display = 'none';
+      const span = document.getElementById('dev-name-' + id);
+      if (span) span.style.display = '';
+    }
+  });
+});
+
+
 // ── Confirmation Modal ────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function() {
   const modal = document.createElement('div');

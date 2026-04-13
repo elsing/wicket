@@ -20,10 +20,10 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/wicket-vpn/wicket/internal/config"
-	"github.com/wicket-vpn/wicket/internal/db"
 	agenthub "github.com/wicket-vpn/wicket/internal/agent"
+	"github.com/wicket-vpn/wicket/internal/config"
 	"github.com/wicket-vpn/wicket/internal/core"
+	"github.com/wicket-vpn/wicket/internal/db"
 	"github.com/wicket-vpn/wicket/internal/oidc"
 	"github.com/wicket-vpn/wicket/internal/portal"
 	"github.com/wicket-vpn/wicket/internal/ws"
@@ -137,6 +137,7 @@ func NewHandler(
 		r.Post("/devices/{deviceID}/disable", h.handleDisableDevice)
 		r.Post("/devices/{deviceID}/enable", h.handleEnableDevice)
 		r.Delete("/devices/{deviceID}", h.handleDeleteDevice)
+		r.Put("/devices/{deviceID}/name", h.handleRenameDevice)
 
 		r.Get("/sessions", h.handleSessions)
 		r.Post("/sessions/admin-activate/{deviceID}", h.handleAdminActivateSession)
@@ -259,7 +260,6 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request) {
 
 	http.Redirect(w, r, "/", http.StatusFound)
 }
-
 
 func (h *Handler) handleLocalLogin(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
@@ -544,12 +544,22 @@ func (h *Handler) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleAssignGroupAgent(w http.ResponseWriter, r *http.Request) {
 	groupID := chi.URLParam(r, "groupID")
-	if err := h.svc.DB().AssignAgentToGroup(r.Context(), groupID, r.FormValue("agent_id")); err != nil {
+	agentID := r.FormValue("agent_id")
+	if agentID == "" {
+		http.Error(w, "agent_id required", http.StatusBadRequest)
+		return
+	}
+	// Enforce one agent per group — remove any existing agent first.
+	if err := h.svc.DB().ClearGroupAgents(r.Context(), groupID); err != nil {
+		h.serverError(w, "clearing existing group agent", err)
+		return
+	}
+	if err := h.svc.DB().AssignAgentToGroup(r.Context(), groupID, agentID); err != nil {
 		h.serverError(w, "assigning agent to group", err)
 		return
 	}
 	sessU := portal.SessionFromContext(r.Context())
-	h.svc.WriteAdminAuditLog(r.Context(), sessU.UserID, db.AuditEventGroupUpdated, clientIP(r), groupID)
+	h.svc.WriteAdminAuditLog(r.Context(), sessU.UserID, db.AuditEventGroupAgentAdded, clientIP(r), groupID)
 	renderGroupCard(w, r, h.groupsData(r), groupID)
 }
 
@@ -589,7 +599,7 @@ func (h *Handler) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 			maxExt = &n
 		}
 	}
-	if err := h.svc.DB().UpdateGroup(r.Context(), groupID, name, r.FormValue("description"), d, maxExt, r.FormValue("endpoint_override"), r.FormValue("is_public") == "true"); err != nil {
+	if err := h.svc.DB().UpdateGroup(r.Context(), groupID, name, r.FormValue("description"), d, maxExt, r.FormValue("endpoint_override"), r.FormValue("is_public") == "true", r.FormValue("dns")); err != nil {
 		if isUniqueViolation(err) {
 			http.Error(w, "A group with that name already exists", http.StatusConflict)
 			return
@@ -605,17 +615,29 @@ func (h *Handler) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) groupsData(r *http.Request) AdminGroupsData {
 	sess := portal.SessionFromContext(r.Context())
 	groups, err := h.svc.ListAllGroups(r.Context())
-	if err != nil { h.log.Error("admin: listing groups", zap.Error(err)) }
+	if err != nil {
+		h.log.Error("admin: listing groups", zap.Error(err))
+	}
 	routes, err := h.svc.ListAllRoutes(r.Context())
-	if err != nil { h.log.Error("admin: listing routes", zap.Error(err)) }
+	if err != nil {
+		h.log.Error("admin: listing routes", zap.Error(err))
+	}
 	agents, err := h.svc.DB().ListAgents(r.Context())
-	if err != nil { h.log.Error("admin: listing agents", zap.Error(err)) }
+	if err != nil {
+		h.log.Error("admin: listing agents", zap.Error(err))
+	}
 	groupRoutes, err := h.svc.DB().ListGroupRoutes(r.Context())
-	if err != nil { h.log.Error("admin: listing group routes", zap.Error(err)) }
+	if err != nil {
+		h.log.Error("admin: listing group routes", zap.Error(err))
+	}
 	groupAgents, err := h.svc.DB().GetGroupAgentMap(r.Context())
-	if err != nil { h.log.Error("admin: listing group agents", zap.Error(err)) }
+	if err != nil {
+		h.log.Error("admin: listing group agents", zap.Error(err))
+	}
 	deviceCounts, _ := h.svc.DB().DeviceCountPerGroup(r.Context())
-	if err != nil { h.log.Error("admin: counting devices", zap.Error(err)) }
+	if err != nil {
+		h.log.Error("admin: counting devices", zap.Error(err))
+	}
 	agentsByID := make(map[string]*db.Agent, len(agents))
 	for _, a := range agents {
 		agentsByID[a.ID] = a
@@ -718,7 +740,7 @@ func (h *Handler) handleCreateRoute(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid CIDR format", http.StatusBadRequest)
 		return
 	}
-	if _, err := h.svc.DB().CreateRoute(r.Context(), name, cidr, r.FormValue("description")); err != nil {
+	if _, err := h.svc.DB().CreateRoute(r.Context(), name, cidr, r.FormValue("description"), r.FormValue("is_excluded") == "true"); err != nil {
 		h.serverError(w, "internal error", err)
 		return
 	}
@@ -756,7 +778,9 @@ func (h *Handler) handleAgentsList(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) agentsData(r *http.Request) AdminAgentsData {
 	agents, err := h.svc.DB().ListAgents(r.Context())
-	if err != nil { h.log.Error("admin: listing agents", zap.Error(err)) }
+	if err != nil {
+		h.log.Error("admin: listing agents", zap.Error(err))
+	}
 	counts := h.hub.ConnectedCount()
 	if h.agentHub != nil {
 		connectedIDs := make(map[string]bool)
@@ -809,7 +833,6 @@ func (h *Handler) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("HX-Trigger", `{"refreshAgentsList": true}`)
 	renderAgentToken(w, r, agent, token)
 }
-
 
 func (h *Handler) handleDeleteAgent(w http.ResponseWriter, r *http.Request) {
 	sessDA := portal.SessionFromContext(r.Context())
@@ -888,12 +911,18 @@ func (h *Handler) handleDeviceMetrics(w http.ResponseWriter, r *http.Request) {
 	for i := 1; i < len(snaps); i++ {
 		prev, cur := snaps[i-1], snaps[i]
 		dt := cur.RecordedAt.Sub(prev.RecordedAt).Seconds()
-		if dt <= 0 { dt = 30 }
+		if dt <= 0 {
+			dt = 30
+		}
 		// Rate in bytes/sec. Guard against counter resets (negative deltas).
 		sent := float64(cur.BytesSent-prev.BytesSent) / dt
 		recv := float64(cur.BytesReceived-prev.BytesReceived) / dt
-		if sent < 0 { sent = 0 }
-		if recv < 0 { recv = 0 }
+		if sent < 0 {
+			sent = 0
+		}
+		if recv < 0 {
+			recv = 0
+		}
 		points = append(points, point{
 			Time:          cur.RecordedAt.Format("15:04"),
 			BytesSent:     sent,
@@ -927,6 +956,21 @@ func (h *Handler) renderDeviceRow(w http.ResponseWriter, r *http.Request, device
 // renderGroupCard fetches current group data and renders just that card.
 func (h *Handler) renderGroupCard(w http.ResponseWriter, r *http.Request, groupID string) {
 	renderGroupCard(w, r, h.groupsData(r), groupID)
+}
+
+func (h *Handler) handleRenameDevice(w http.ResponseWriter, r *http.Request) {
+	deviceID := chi.URLParam(r, "deviceID")
+	name := r.FormValue("name")
+	if name == "" {
+		http.Error(w, "name required", http.StatusBadRequest)
+		return
+	}
+	if err := h.svc.DB().RenameDevice(r.Context(), deviceID, name); err != nil {
+		h.serverError(w, "renaming device", err)
+		return
+	}
+	// Return updated device row
+	h.renderDeviceRow(w, r, deviceID)
 }
 
 func (h *Handler) handleDeleteDevice(w http.ResponseWriter, r *http.Request) {

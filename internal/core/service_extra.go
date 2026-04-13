@@ -50,13 +50,19 @@ func (s *Service) WriteAdminAuditLog(ctx context.Context, actorID, event, ip, me
 }
 
 func (s *Service) WriteAuditLog(ctx context.Context, deviceID, userID, event, ip string) {
-	if err := s.db.WriteAuditLog(ctx, &db.AuditLog{
+	entry := &db.AuditLog{
 		UserID:    sql.NullString{String: userID, Valid: userID != ""},
 		DeviceID:  sql.NullString{String: deviceID, Valid: deviceID != ""},
 		Event:     event,
 		IPAddress: ip,
-	}); err != nil {
-		s.log.Warn("writing audit log", zap.Error(err))
+	}
+	if err := s.db.WriteAuditLog(ctx, entry); err != nil {
+		// FK violation — drop the offending reference and retry.
+		entry.UserID = sql.NullString{}
+		entry.DeviceID = sql.NullString{}
+		if err2 := s.db.WriteAuditLog(ctx, entry); err2 != nil {
+			s.log.Warn("writing audit log", zap.Error(err2))
+		}
 	}
 }
 

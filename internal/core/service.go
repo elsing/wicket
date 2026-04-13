@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -256,6 +257,106 @@ func (s *Service) CreateDevice(ctx context.Context, userID, groupID, name, ipAdd
 	}, nil
 }
 
+// excludeCIDR returns a list of CIDRs that cover all of 0.0.0.0/0
+// EXCEPT the given cidr. This allows WireGuard AllowedIPs to route
+// everything through the tunnel while bypassing a specific range.
+// e.g. excludeCIDR("10.0.0.0/8") → all IPv4 except 10.0.0.0/8
+func excludeCIDR(cidr string) []string {
+	_, excl, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return []string{"0.0.0.0/0"}
+	}
+
+	// Start with the full IPv4 space, then subtract the excluded block
+	result := subtractCIDR("0.0.0.0/0", excl)
+	return result
+}
+
+// subtractCIDR returns the CIDRs of (base minus excl) using binary splitting.
+func subtractCIDR(baseStr string, excl *net.IPNet) []string {
+	_, base, err := net.ParseCIDR(baseStr)
+	if err != nil {
+		return nil
+	}
+	return subtractNet(base, excl)
+}
+
+func subtractNet(base, excl *net.IPNet) []string {
+	// If base and excl don't overlap, keep base as-is
+	baseIP := base.IP.To4()
+	exclIP := excl.IP.To4()
+	if baseIP == nil || exclIP == nil {
+		return []string{base.String()}
+	}
+
+	// Check overlap
+	if !base.Contains(excl.IP) && !excl.Contains(base.IP) {
+		return []string{base.String()}
+	}
+
+	// If excl contains base entirely, nothing remains
+	if excl.Contains(base.IP) {
+		baseLast := lastIP(base)
+		if excl.Contains(baseLast) {
+			return nil
+		}
+	}
+
+	// If base == excl, nothing remains
+	baseOnes, baseBits := base.Mask.Size()
+	exclOnes, _ := excl.Mask.Size()
+	if baseOnes == exclOnes && base.IP.Equal(excl.IP) {
+		return nil
+	}
+
+	// Split base in half and recurse
+	nextOnes := baseOnes + 1
+	if nextOnes > baseBits {
+		return []string{base.String()}
+	}
+	half1Str := fmt.Sprintf("%s/%d", baseIP.String(), nextOnes)
+	_, h1, _ := net.ParseCIDR(half1Str)
+	if h1 == nil {
+		return []string{base.String()}
+	}
+
+	// Compute second half
+	h2IP := make(net.IP, 4)
+	copy(h2IP, h1.IP)
+	h2IP = incrementIPBy(h2IP, 1<<uint(baseBits-nextOnes))
+	h2Str := fmt.Sprintf("%s/%d", h2IP.String(), nextOnes)
+	_, h2, _ := net.ParseCIDR(h2Str)
+	if h2 == nil {
+		return []string{base.String()}
+	}
+
+	var result []string
+	result = append(result, subtractNet(h1, excl)...)
+	result = append(result, subtractNet(h2, excl)...)
+	return result
+}
+
+func lastIP(n *net.IPNet) net.IP {
+	ip := n.IP.To4()
+	if ip == nil {
+		return n.IP
+	}
+	l := make(net.IP, 4)
+	for i := 0; i < 4; i++ {
+		l[i] = ip[i] | ^n.Mask[i]
+	}
+	return l
+}
+
+func incrementIPBy(ip net.IP, n uint32) net.IP {
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return ip
+	}
+	v := (uint32(ip4[0])<<24 | uint32(ip4[1])<<16 | uint32(ip4[2])<<8 | uint32(ip4[3])) + n
+	return net.IP{byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v)}
+}
+
 // buildClientConfig assembles the WireGuard .conf for a device.
 func (s *Service) buildClientConfig(ctx context.Context, dev *db.Device, privateKey string) (string, error) {
 	subnets, err := s.db.ListRoutesForDevice(ctx, dev.ID)
@@ -265,7 +366,17 @@ func (s *Service) buildClientConfig(ctx context.Context, dev *db.Device, private
 
 	allowedIPs := make([]string, 0, len(subnets)+1)
 	for _, sub := range subnets {
-		allowedIPs = append(allowedIPs, sub.CIDR)
+		if sub.IsExcluded {
+			// Excluded routes: include 0.0.0.0/0 as the base, then route out
+			// the excluded CIDR via the default gateway (not the tunnel).
+			// WireGuard doesn't support exclusions natively — we approximate
+			// by splitting the address space around the excluded block.
+			for _, split := range excludeCIDR(sub.CIDR) {
+				allowedIPs = append(allowedIPs, split)
+			}
+		} else {
+			allowedIPs = append(allowedIPs, sub.CIDR)
+		}
 	}
 
 	// Always include the VPN subnet itself so the device can reach the server
@@ -318,10 +429,17 @@ func (s *Service) buildClientConfig(ctx context.Context, dev *db.Device, private
 		}
 	}
 
+	// Use group DNS if set, otherwise fall back to global config.
+	dnsServers := s.cfg.WireGuard.DNS
+	if group, err := s.db.GetGroupByID(ctx, dev.GroupID); err == nil && group.DNS != "" {
+		// DNS stored as comma-separated string e.g. "1.1.1.1, 8.8.8.8"
+		dnsServers = strings.Split(strings.ReplaceAll(group.DNS, " ", ""), ",")
+	}
+
 	conf := wireguard.BuildClientConfig(wireguard.ClientConfigParams{
 		PrivateKey:      privateKey,
 		AssignedIP:      dev.AssignedIP,
-		DNS:             s.cfg.WireGuard.DNS,
+		DNS:             dnsServers,
 		ServerPublicKey: serverPubKey,
 		ServerEndpoint:  endpoint,
 		AllowedIPs:      allowedIPs,
@@ -399,15 +517,7 @@ func (s *Service) ApproveDevice(ctx context.Context, deviceID, adminUserID, ipAd
 		return fmt.Errorf("approving device in DB: %w", err)
 	}
 
-	if err := s.db.WriteAuditLog(ctx, &db.AuditLog{
-		UserID:    sql.NullString{String: adminUserID, Valid: true},
-		DeviceID:  sql.NullString{String: deviceID, Valid: true},
-		Event:     db.AuditEventDeviceApproved,
-		IPAddress: ipAddress,
-		Metadata:  db.AuditMeta("device_name", dev.Name),
-	}); err != nil {
-		s.log.Warn("writing device approved audit log", zap.Error(err))
-	}
+	s.WriteAdminAuditLog(ctx, adminUserID, db.AuditEventDeviceApproved, ipAddress, db.AuditMeta("device_name", dev.Name))
 
 	s.emit(Event{Type: EventDeviceApproved, DeviceID: deviceID, UserID: adminUserID, OwnerID: dev.UserID, Payload: map[string]any{"device_name": dev.Name}})
 	return nil
@@ -460,6 +570,9 @@ func (s *Service) DisableDevice(ctx context.Context, deviceID, actorUserID, ipAd
 		}
 	}
 	s.notifyAgentPeerRemove(ctx, dev)
+	if s.reconciler != nil {
+		s.reconciler.Trigger()
+	}
 
 	// Mark disabled in DB
 	if err := s.db.SetDeviceActive(ctx, deviceID, false); err != nil {
@@ -621,7 +734,9 @@ func (s *Service) ActivateSession(ctx context.Context, deviceID, userID, ipAddre
 
 	s.emit(Event{Type: EventSessionCreated, DeviceID: deviceID, UserID: userID, OwnerID: userID,
 		Payload: map[string]any{"expires_at": expiresAt}})
-	if s.reconciler != nil { s.reconciler.Trigger() } // push peer to agents immediately
+	if s.reconciler != nil {
+		s.reconciler.Trigger()
+	} // push peer to agents immediately
 
 	// Add the peer to the local WireGuard interface, unless the group is managed
 	// by a remote agent — in that case the agent handles its own WireGuard.
@@ -770,10 +885,13 @@ func (s *Service) RevokeSession(ctx context.Context, sessionID, actorUserID, ipA
 		return fmt.Errorf("revoking session: %w", err)
 	}
 
-	// Remove the peer immediately — unless the group is agent-managed.
+	// Remove the peer immediately.
 	dev, err := s.db.GetDeviceByID(ctx, session.DeviceID)
 	if err == nil {
-		if !s.groupHasActiveAgent(ctx, dev.GroupID) {
+		if s.groupHasActiveAgent(ctx, dev.GroupID) {
+			// Agent-managed: notify agent directly for immediate removal.
+			s.notifyAgentPeerRemove(ctx, dev)
+		} else {
 			if err := s.peers.RemovePeer(dev.PublicKey); err != nil {
 				s.log.Warn("removing peer on revoke",
 					zap.String("device_id", dev.ID),
@@ -798,7 +916,9 @@ func (s *Service) RevokeSession(ctx context.Context, sessionID, actorUserID, ipA
 		ownerID = dev.UserID
 	}
 	s.emit(Event{Type: EventSessionRevoked, DeviceID: session.DeviceID, UserID: actorUserID, OwnerID: ownerID})
-	if s.reconciler != nil { s.reconciler.Trigger() } // remove peer from agents immediately
+	if s.reconciler != nil {
+		s.reconciler.Trigger()
+	} // remove peer from agents immediately
 	return nil
 }
 
@@ -828,7 +948,9 @@ func (s *Service) AdminExtendSession(ctx context.Context, sessionID, adminUserID
 	if dev, err := s.db.GetDeviceByID(ctx, extended.DeviceID); err == nil {
 		s.notifyAgentPeerUpdate(ctx, dev, extended)
 	}
-	if s.reconciler != nil { s.reconciler.Trigger() }
+	if s.reconciler != nil {
+		s.reconciler.Trigger()
+	}
 	return extended, nil
 }
 

@@ -14,18 +14,19 @@ import (
 // Group defines a session policy and a default set of subnets.
 // Users and devices inherit the group's settings.
 type Group struct {
-	ID              string        `db:"id"`
-	Name            string        `db:"name"`
-	Description     string        `db:"description"`
-	SessionDuration time.Duration `db:"session_duration"` // stored as seconds in DB
-	MaxExtensions   sql.NullInt64 `db:"max_extensions"`   // NULL = unlimited
-	IsPublic        bool          `db:"is_public"`        // any user can select this group
-	CreatedAt       time.Time     `db:"created_at"`
-	UpdatedAt       time.Time     `db:"updated_at"`
+	ID               string        `db:"id"`
+	Name             string        `db:"name"`
+	Description      string        `db:"description"`
+	SessionDuration  time.Duration `db:"session_duration"`
+	MaxExtensions    sql.NullInt64 `db:"max_extensions"`
+	IsPublic         bool          `db:"is_public"`
+	EndpointOverride string        `db:"endpoint_override"`
+	DNS              string        `db:"dns"`
+	CreatedAt        time.Time     `db:"created_at"`
+	UpdatedAt        time.Time     `db:"updated_at"`
 
-	// Populated by joins, not stored in this table.
-	Routes           []Route `db:"-"`
-	EndpointOverride string  `db:"endpoint_override"` // optional: override endpoint in client configs
+	// Populated by joins.
+	Routes []Route `db:"-"`
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -39,6 +40,7 @@ type Route struct {
 	Name        string    `db:"name"`
 	CIDR        string    `db:"cidr"`
 	Description string    `db:"description"`
+	IsExcluded  bool      `db:"is_excluded"`
 	CreatedAt   time.Time `db:"created_at"`
 	UpdatedAt   time.Time `db:"updated_at"`
 }
