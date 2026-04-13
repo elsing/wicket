@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	_ "embed"
 	"errors"
 	"fmt"
 	"net"
@@ -26,6 +27,9 @@ import (
 	"github.com/wicket-vpn/wicket/internal/oidc"
 	"github.com/wicket-vpn/wicket/internal/ws"
 )
+
+//go:embed static/agent/install.sh
+var agentInstallScript []byte
 
 const (
 	oidcStateCookie = "wicket_oidc_state"
