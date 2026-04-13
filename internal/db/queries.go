@@ -174,15 +174,11 @@ func (d *DB) ListGroupsForUser(ctx context.Context, userID string) ([]*Group, er
 func (d *DB) CreateGroup(ctx context.Context, name, description string, sessionDuration time.Duration, maxExtensions *int64, isPublic bool) (*Group, error) {
 	id := newID()
 	now := time.Now().UTC()
-	isPublicInt := 0
-	if isPublic {
-		isPublicInt = 1
-	}
 	_, err := d.sql.ExecContext(ctx,
 		`INSERT INTO groups (id, name, description, session_duration, max_extensions, is_public, created_at, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT DO NOTHING`,
-		id, name, description, int64(sessionDuration.Seconds()), maxExtensions, isPublicInt, now, now,
+		id, name, description, int64(sessionDuration.Seconds()), maxExtensions, isPublic, now, now,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("creating group: %w", err)
