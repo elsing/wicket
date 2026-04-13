@@ -9,7 +9,7 @@ import (
 func (d *DB) AddUserToGroup(ctx context.Context, userID, groupID string) error {
 	_, err := d.sql.ExecContext(ctx,
 		`INSERT INTO user_groups (id, user_id, group_id, created_at) VALUES ($1, $2, $3, $4)
-		ON CONFLICT DO NOTHING ON CONFLICT DO NOTHING`,
+		ON CONFLICT DO NOTHING`,
 		newID(), userID, groupID, time.Now().UTC())
 	return err
 }
@@ -22,7 +22,7 @@ func (d *DB) RemoveUserFromGroup(ctx context.Context, userID, groupID string) er
 func (d *DB) AddRouteToGroup(ctx context.Context, groupID, routeID string) error {
 	_, err := d.sql.ExecContext(ctx,
 		`INSERT INTO group_subnets (id, group_id, route_id, created_at) VALUES ($1, $2, $3, $4)
-		ON CONFLICT DO NOTHING ON CONFLICT DO NOTHING`,
+		ON CONFLICT DO NOTHING`,
 		newID(), groupID, routeID, time.Now().UTC())
 	return err
 }
@@ -35,7 +35,7 @@ func (d *DB) RemoveRouteFromGroup(ctx context.Context, groupID, routeID string) 
 func (d *DB) AddSubnetToDevice(ctx context.Context, deviceID, routeID string) error {
 	_, err := d.sql.ExecContext(ctx,
 		`INSERT INTO device_subnets (id, device_id, route_id, created_at) VALUES ($1, $2, $3, $4)
-		ON CONFLICT DO NOTHING ON CONFLICT DO NOTHING`,
+		ON CONFLICT DO NOTHING`,
 		newID(), deviceID, routeID, time.Now().UTC())
 	return err
 }
@@ -89,7 +89,7 @@ func (d *DB) GetLocalAdminByUsername(ctx context.Context, username string) (*Loc
 func (d *DB) CreateLocalAdmin(ctx context.Context, username, passwordHash string) error {
 	_, err := d.sql.ExecContext(ctx,
 		`INSERT INTO local_admins (id, username, password_hash, created_at) VALUES ($1, $2, $3, $4)
-		ON CONFLICT DO NOTHING ON CONFLICT DO NOTHING`,
+		ON CONFLICT DO NOTHING`,
 		newID(), username, passwordHash, time.Now().UTC())
 	return err
 }
@@ -252,7 +252,7 @@ func (d *DB) UpdateGroup(ctx context.Context, id, name, description string, sess
 func (d *DB) AssignAgentToGroup(ctx context.Context, groupID, agentID string) error {
 	_, err := d.sql.ExecContext(ctx,
 		`INSERT INTO group_agents (group_id, agent_id) VALUES ($1, $2)
-		ON CONFLICT DO NOTHING ON CONFLICT DO NOTHING`,
+		ON CONFLICT DO NOTHING`,
 		groupID, agentID)
 	return err
 }

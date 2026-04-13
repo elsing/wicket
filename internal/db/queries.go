@@ -57,8 +57,7 @@ func (d *DB) UpsertUser(ctx context.Context, sub, email, displayName string) (*U
 	now := time.Now().UTC()
 	_, err := d.sql.ExecContext(ctx, `
 		INSERT INTO users (id, oidc_sub, email, display_name, is_active, is_admin, created_at, updated_at, last_login_at)
-		VALUES ($1, $2, $3, $4, 1, 0, $5, $6, $7)
-		ON CONFLICT DO NOTHING
+		VALUES ($1, $2, $3, $4, TRUE, FALSE, $5, $6, $7)
 		ON CONFLICT(oidc_sub) DO UPDATE SET
 			email         = excluded.email,
 			display_name  = excluded.display_name,
@@ -286,7 +285,7 @@ func (d *DB) CreateRoute(ctx context.Context, name, cidr, description string) (*
 	now := time.Now().UTC()
 	_, err := d.sql.ExecContext(ctx,
 		`INSERT INTO subnets (id, name, cidr, description, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6)
-		ON CONFLICT DO NOTHING ON CONFLICT DO NOTHING`,
+		ON CONFLICT DO NOTHING`,
 		id, name, cidr, description, now, now,
 	)
 	if err != nil {
@@ -464,7 +463,7 @@ func (d *DB) CreateDevice(ctx context.Context, dev *Device) (*Device, error) {
 			(id, user_id, group_id, name, public_key, assigned_ip,
 			 is_approved, is_active, auto_renew, config_downloaded,
 			 created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, 0, 1, 0, 0, $7, $8)
+		VALUES ($1, $2, $3, $4, $5, $6, FALSE, TRUE, FALSE, FALSE, $7, $8)
 		ON CONFLICT DO NOTHING
 	`, dev.ID, dev.UserID, dev.GroupID, dev.Name, dev.PublicKey, dev.AssignedIP, now, now)
 	if err != nil {
@@ -670,6 +669,7 @@ func scanSession(row *sql.Row) (*Session, error) {
 	return &s, err
 }
 
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Agents
 // ─────────────────────────────────────────────────────────────────────────────
@@ -705,7 +705,7 @@ func (d *DB) CreateAgent(ctx context.Context, name, description, tokenHash, vpnP
 	now := time.Now().UTC()
 	_, err := d.sql.ExecContext(ctx,
 		`INSERT INTO agents (id, name, description, token, vpn_pool, endpoint, is_active, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, 1, $7)
+		 VALUES ($1, $2, $3, $4, $5, $6, TRUE, $7)
 		ON CONFLICT DO NOTHING`,
 		id, name, description, tokenHash, vpnPool, endpoint, now,
 	)

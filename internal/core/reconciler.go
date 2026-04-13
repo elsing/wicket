@@ -24,7 +24,6 @@ import (
 //     (e.g. after a container restart)
 //   - Samples per-peer metrics into metric_snapshots
 //   - Prunes old metric rows beyond the retention window
-//
 // AgentPusher is the interface for pushing peer changes to remote agents.
 type AgentPusher interface {
 	SendPeerAdd(agentIDs []string, peer interface{})
@@ -60,11 +59,11 @@ type Reconciler struct {
 func NewReconciler(database *db.DB, peers wireguard.PeerManager, svc *Service, retainMetrics time.Duration, log *zap.Logger) *Reconciler {
 	return &Reconciler{
 		trigger: make(chan struct{}, 1),
-		db:      database,
-		peers:   peers,
-		svc:     svc,
-		log:     log,
-		retain:  retainMetrics,
+		db:     database,
+		peers:  peers,
+		svc:    svc,
+		log:    log,
+		retain: retainMetrics,
 	}
 }
 
@@ -169,8 +168,8 @@ func (r *Reconciler) removeExpiredPeers(ctx context.Context) {
 		SELECT DISTINCT d.id, d.public_key, d.name, u.email
 		FROM devices d
 		JOIN users u ON u.id = d.user_id
-		WHERE d.is_approved = 1
-		  AND d.is_active   = 1
+		WHERE d.is_approved = TRUE
+		  AND d.is_active = TRUE
 		  AND NOT EXISTS (
 		      SELECT 1 FROM sessions s
 		      WHERE s.device_id = d.id
@@ -280,8 +279,8 @@ func (r *Reconciler) ensureActivePeers(ctx context.Context) {
 		        AND s.expires_at > NOW() ORDER BY s.expires_at DESC LIMIT 1) AS expires_at
 		FROM devices d
 		JOIN users u ON u.id = d.user_id
-		WHERE d.is_approved = 1
-		  AND d.is_active   = 1
+		WHERE d.is_approved = TRUE
+		  AND d.is_active = TRUE
 		  AND EXISTS (
 		      SELECT 1 FROM sessions s
 		      WHERE s.device_id = d.id
