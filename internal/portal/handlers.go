@@ -1,15 +1,12 @@
 package portal
 
-//go:embed ../../web/public/static/agent/install.sh
-var agentInstallScript []byte
-
 import (
 	"context"
 	_ "embed"
-	"errors"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -24,12 +21,15 @@ import (
 
 	qrcode "github.com/skip2/go-qrcode"
 
-	"github.com/wicket-vpn/wicket/internal/config"
 	agenthub "github.com/wicket-vpn/wicket/internal/agent"
+	"github.com/wicket-vpn/wicket/internal/config"
 	"github.com/wicket-vpn/wicket/internal/core"
 	"github.com/wicket-vpn/wicket/internal/oidc"
 	"github.com/wicket-vpn/wicket/internal/ws"
 )
+
+//go:embed ../../web/public/static/agent/install.sh
+var agentInstallScript []byte
 
 const (
 	oidcStateCookie = "wicket_oidc_state"
