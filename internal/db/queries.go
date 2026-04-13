@@ -239,7 +239,7 @@ func (d *DB) ListRoutes(ctx context.Context) ([]*Route, error) {
 
 func (d *DB) ListRoutesForDevice(ctx context.Context, deviceID string) ([]*Route, error) {
 	rows, err := d.sql.QueryContext(ctx, `
-		SELECT s.id, s.name, s.cidr, s.description, s.created_at, s.updated_at
+		SELECT s.id, s.name, s.cidr, s.description, s.is_excluded, s.created_at, s.updated_at
 		FROM device_subnets ds
 		JOIN subnets s ON s.id = ds.route_id
 		WHERE ds.device_id = $1
@@ -258,7 +258,7 @@ func (d *DB) ListRoutesForDevice(ctx context.Context, deviceID string) ([]*Route
 	}
 	// Fall back to group subnets
 	rows2, err := d.sql.QueryContext(ctx, `
-		SELECT s.id, s.name, s.cidr, s.description, s.created_at, s.updated_at
+		SELECT s.id, s.name, s.cidr, s.description, s.is_excluded, s.created_at, s.updated_at
 		FROM group_subnets gs
 		JOIN subnets s ON s.id = gs.route_id
 		JOIN devices d ON d.group_id = gs.group_id
@@ -276,9 +276,9 @@ func (d *DB) CreateRoute(ctx context.Context, name, cidr, description string, is
 	id := newID()
 	now := time.Now().UTC()
 	_, err := d.sql.ExecContext(ctx,
-		`INSERT INTO subnets (id, name, cidr, description, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6)
+		`INSERT INTO subnets (id, name, cidr, description, is_excluded, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT DO NOTHING`,
-		id, name, cidr, description, now, now,
+		id, name, cidr, description, isExcluded, now, now,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("creating subnet: %w", err)
