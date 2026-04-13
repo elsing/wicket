@@ -159,6 +159,11 @@ func execMigration(db *sql.DB, sqlStr string) error {
 		}
 
 		if _, err := db.Exec(stmt); err != nil {
+			// IF NOT EXISTS statements are idempotent — skip duplicate object errors.
+			errMsg := err.Error()
+			if strings.Contains(errMsg, "already exists") {
+				continue
+			}
 			return fmt.Errorf("executing statement: %w\nSQL: %s", err, stmt)
 		}
 	}

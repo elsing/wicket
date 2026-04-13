@@ -1,17 +1,19 @@
 -- Migration 001: Initial schema (PostgreSQL)
+-- Single consolidated migration for fresh installs.
 
-CREATE TABLE groups (
+CREATE TABLE IF NOT EXISTS groups (
     id               TEXT        NOT NULL PRIMARY KEY,
     name             TEXT        NOT NULL UNIQUE,
     description      TEXT        NOT NULL DEFAULT '',
     session_duration INTEGER     NOT NULL DEFAULT 86400,
     max_extensions   INTEGER,
     is_public        BOOLEAN     NOT NULL DEFAULT FALSE,
+    endpoint_override TEXT       NOT NULL DEFAULT '',
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE subnets (
+CREATE TABLE IF NOT EXISTS subnets (
     id          TEXT        NOT NULL PRIMARY KEY,
     name        TEXT        NOT NULL UNIQUE,
     cidr        TEXT        NOT NULL UNIQUE,
@@ -20,7 +22,7 @@ CREATE TABLE subnets (
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE group_subnets (
+CREATE TABLE IF NOT EXISTS group_subnets (
     id         TEXT        NOT NULL PRIMARY KEY,
     group_id   TEXT        NOT NULL REFERENCES groups(id)  ON DELETE CASCADE,
     route_id   TEXT        NOT NULL REFERENCES subnets(id) ON DELETE CASCADE,
@@ -28,10 +30,10 @@ CREATE TABLE group_subnets (
     UNIQUE(group_id, route_id)
 );
 
-CREATE INDEX idx_group_subnets_group_id ON group_subnets(group_id);
-CREATE INDEX idx_group_subnets_route_id ON group_subnets(route_id);
+CREATE INDEX IF NOT EXISTS idx_group_subnets_group_id ON group_subnets(group_id);
+CREATE INDEX IF NOT EXISTS idx_group_subnets_route_id ON group_subnets(route_id);
 
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
     id            TEXT        NOT NULL PRIMARY KEY,
     oidc_sub      TEXT        NOT NULL UNIQUE,
     email         TEXT        NOT NULL UNIQUE,
@@ -43,10 +45,10 @@ CREATE TABLE users (
     last_login_at TIMESTAMPTZ
 );
 
-CREATE INDEX idx_users_oidc_sub ON users(oidc_sub);
-CREATE INDEX idx_users_email    ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_oidc_sub ON users(oidc_sub);
+CREATE INDEX IF NOT EXISTS idx_users_email    ON users(email);
 
-CREATE TABLE user_groups (
+CREATE TABLE IF NOT EXISTS user_groups (
     id         TEXT        NOT NULL PRIMARY KEY,
     user_id    TEXT        NOT NULL REFERENCES users(id)  ON DELETE CASCADE,
     group_id   TEXT        NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
@@ -54,10 +56,10 @@ CREATE TABLE user_groups (
     UNIQUE(user_id, group_id)
 );
 
-CREATE INDEX idx_user_groups_user_id  ON user_groups(user_id);
-CREATE INDEX idx_user_groups_group_id ON user_groups(group_id);
+CREATE INDEX IF NOT EXISTS idx_user_groups_user_id  ON user_groups(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_groups_group_id ON user_groups(group_id);
 
-CREATE TABLE devices (
+CREATE TABLE IF NOT EXISTS devices (
     id                TEXT        NOT NULL PRIMARY KEY,
     user_id           TEXT        NOT NULL REFERENCES users(id)  ON DELETE CASCADE,
     group_id          TEXT        NOT NULL REFERENCES groups(id) ON DELETE RESTRICT,
@@ -74,11 +76,11 @@ CREATE TABLE devices (
     UNIQUE(user_id, name)
 );
 
-CREATE INDEX idx_devices_user_id    ON devices(user_id);
-CREATE INDEX idx_devices_group_id   ON devices(group_id);
-CREATE INDEX idx_devices_public_key ON devices(public_key);
+CREATE INDEX IF NOT EXISTS idx_devices_user_id    ON devices(user_id);
+CREATE INDEX IF NOT EXISTS idx_devices_group_id   ON devices(group_id);
+CREATE INDEX IF NOT EXISTS idx_devices_public_key ON devices(public_key);
 
-CREATE TABLE device_subnets (
+CREATE TABLE IF NOT EXISTS device_subnets (
     id         TEXT        NOT NULL PRIMARY KEY,
     device_id  TEXT        NOT NULL REFERENCES devices(id)  ON DELETE CASCADE,
     route_id   TEXT        NOT NULL REFERENCES subnets(id)  ON DELETE CASCADE,
@@ -86,10 +88,10 @@ CREATE TABLE device_subnets (
     UNIQUE(device_id, route_id)
 );
 
-CREATE INDEX idx_device_subnets_device_id ON device_subnets(device_id);
-CREATE INDEX idx_device_subnets_route_id  ON device_subnets(route_id);
+CREATE INDEX IF NOT EXISTS idx_device_subnets_device_id ON device_subnets(device_id);
+CREATE INDEX IF NOT EXISTS idx_device_subnets_route_id  ON device_subnets(route_id);
 
-CREATE TABLE sessions (
+CREATE TABLE IF NOT EXISTS sessions (
     id              TEXT        NOT NULL PRIMARY KEY,
     device_id       TEXT        NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
     authed_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -103,12 +105,13 @@ CREATE TABLE sessions (
                                 CHECK(status IN ('active', 'expired', 'revoked'))
 );
 
-CREATE INDEX idx_sessions_device_id  ON sessions(device_id);
-CREATE INDEX idx_sessions_expires_at ON sessions(expires_at);
-CREATE INDEX idx_sessions_status     ON sessions(status);
-CREATE UNIQUE INDEX idx_sessions_one_active_per_device ON sessions(device_id) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS idx_sessions_device_id  ON sessions(device_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_status     ON sessions(status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_one_active_per_device
+    ON sessions(device_id) WHERE status = 'active';
 
-CREATE TABLE agents (
+CREATE TABLE IF NOT EXISTS agents (
     id            TEXT        NOT NULL PRIMARY KEY,
     name          TEXT        NOT NULL UNIQUE,
     description   TEXT        NOT NULL DEFAULT '',
@@ -122,13 +125,13 @@ CREATE TABLE agents (
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE group_agents (
+CREATE TABLE IF NOT EXISTS group_agents (
     group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
     agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
     PRIMARY KEY (group_id, agent_id)
 );
 
-CREATE TABLE metric_snapshots (
+CREATE TABLE IF NOT EXISTS metric_snapshots (
     id             TEXT        NOT NULL PRIMARY KEY,
     device_id      TEXT        NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
     bytes_sent     BIGINT      NOT NULL DEFAULT 0,
@@ -137,10 +140,10 @@ CREATE TABLE metric_snapshots (
     recorded_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_metric_snapshots_device_id   ON metric_snapshots(device_id);
-CREATE INDEX idx_metric_snapshots_recorded_at ON metric_snapshots(recorded_at);
+CREATE INDEX IF NOT EXISTS idx_metric_snapshots_device_id   ON metric_snapshots(device_id);
+CREATE INDEX IF NOT EXISTS idx_metric_snapshots_recorded_at ON metric_snapshots(recorded_at);
 
-CREATE TABLE audit_log (
+CREATE TABLE IF NOT EXISTS audit_log (
     id         TEXT        NOT NULL PRIMARY KEY,
     user_id    TEXT        REFERENCES users(id)   ON DELETE SET NULL,
     device_id  TEXT        REFERENCES devices(id) ON DELETE SET NULL,
@@ -151,37 +154,14 @@ CREATE TABLE audit_log (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_audit_log_user_id    ON audit_log(user_id);
-CREATE INDEX idx_audit_log_device_id  ON audit_log(device_id);
-CREATE INDEX idx_audit_log_event      ON audit_log(event);
-CREATE INDEX idx_audit_log_created_at ON audit_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_log_user_id    ON audit_log(user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_device_id  ON audit_log(device_id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_event      ON audit_log(event);
+CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at);
 
-CREATE TABLE local_admins (
+CREATE TABLE IF NOT EXISTS local_admins (
     id            TEXT        NOT NULL PRIMARY KEY,
     username      TEXT        NOT NULL UNIQUE,
     password_hash TEXT        NOT NULL,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
-CREATE TABLE groups_endpoint_override AS SELECT id, ''::TEXT AS endpoint_override FROM groups WHERE FALSE;
-
--- +migrate StatementBegin
-CREATE OR REPLACE FUNCTION update_updated_at()
-RETURNS TRIGGER
-LANGUAGE plpgsql
-AS $func$
-BEGIN
-    NEW.updated_at = NOW();
-    RETURN NEW;
-END;
-$func$;
--- +migrate StatementEnd
-
-CREATE TRIGGER groups_updated_at  BEFORE UPDATE ON groups  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-CREATE TRIGGER subnets_updated_at BEFORE UPDATE ON subnets FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-CREATE TRIGGER users_updated_at   BEFORE UPDATE ON users   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-CREATE TRIGGER devices_updated_at BEFORE UPDATE ON devices FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-CREATE TRIGGER agents_updated_at  BEFORE UPDATE ON agents  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-
-ALTER TABLE groups ADD COLUMN IF NOT EXISTS endpoint_override TEXT NOT NULL DEFAULT '';
-DROP TABLE IF EXISTS groups_endpoint_override;
