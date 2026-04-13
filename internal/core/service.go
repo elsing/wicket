@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -32,6 +33,44 @@ type Service struct {
 // report its last run time.
 func (s *Service) SetReconciler(r *Reconciler) {
 	s.reconciler = r
+}
+
+// notifyAgentPeerRemove pushes a peer.remove to any agents managing the device's group.
+// Called immediately on session revoke, device disable, or device delete.
+func (s *Service) notifyAgentPeerRemove(ctx context.Context, dev *db.Device) {
+	if s.reconciler == nil || s.reconciler.agentHub == nil {
+		return
+	}
+	agentIDs := s.reconciler.getGroupAgentIDs(ctx, dev.GroupID)
+	if len(agentIDs) == 0 {
+		return
+	}
+	s.reconciler.agentHub.SendPeerRemove(agentIDs, dev.PublicKey, dev.ID)
+}
+
+// notifyAgentPeerUpdate sends a peer.add with updated ExpiresAt to agents.
+// Called on session extension so the agent resets its expiry timer.
+func (s *Service) notifyAgentPeerUpdate(ctx context.Context, dev *db.Device, session *db.Session) {
+	if s.reconciler == nil || s.reconciler.agentHub == nil {
+		return
+	}
+	agentIDs := s.reconciler.getGroupAgentIDs(ctx, dev.GroupID)
+	if len(agentIDs) == 0 {
+		return
+	}
+	routes, _ := s.db.ListRoutesForDevice(ctx, dev.ID)
+	allowedIPs := []string{dev.AssignedIP + "/32"}
+	for _, r := range routes {
+		allowedIPs = append(allowedIPs, r.CIDR)
+	}
+	s.reconciler.agentHub.SendPeerAdd(agentIDs, AgentPeer{
+		PublicKey:  dev.PublicKey,
+		AssignedIP: dev.AssignedIP + "/32",
+		AllowedIPs: allowedIPs,
+		DeviceID:   dev.ID,
+		DeviceName: dev.Name,
+		ExpiresAt:  session.ExpiresAt,
+	})
 }
 
 // NewService constructs the core service.
@@ -176,7 +215,7 @@ func (s *Service) CreateDevice(ctx context.Context, userID, groupID, name, ipAdd
 	}
 
 	// Allocate the next available IP in the VPN subnet.
-	assignedIP, err := s.allocateIP(ctx)
+	assignedIP, err := s.allocateIP(ctx, groupID)
 	if err != nil {
 		return nil, fmt.Errorf("allocating VPN IP: %w", err)
 	}
@@ -218,16 +257,126 @@ func (s *Service) CreateDevice(ctx context.Context, userID, groupID, name, ipAdd
 	}, nil
 }
 
+// excludeCIDR returns a list of CIDRs that cover all of 0.0.0.0/0
+// EXCEPT the given cidr. This allows WireGuard AllowedIPs to route
+// everything through the tunnel while bypassing a specific range.
+// e.g. excludeCIDR("10.0.0.0/8") → all IPv4 except 10.0.0.0/8
+func excludeCIDR(cidr string) []string {
+	_, excl, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return []string{"0.0.0.0/0"}
+	}
+
+	// Start with the full IPv4 space, then subtract the excluded block
+	result := subtractCIDR("0.0.0.0/0", excl)
+	return result
+}
+
+// subtractCIDR returns the CIDRs of (base minus excl) using binary splitting.
+func subtractCIDR(baseStr string, excl *net.IPNet) []string {
+	_, base, err := net.ParseCIDR(baseStr)
+	if err != nil {
+		return nil
+	}
+	return subtractNet(base, excl)
+}
+
+func subtractNet(base, excl *net.IPNet) []string {
+	// If base and excl don't overlap, keep base as-is
+	baseIP := base.IP.To4()
+	exclIP := excl.IP.To4()
+	if baseIP == nil || exclIP == nil {
+		return []string{base.String()}
+	}
+
+	// Check overlap
+	if !base.Contains(excl.IP) && !excl.Contains(base.IP) {
+		return []string{base.String()}
+	}
+
+	// If excl contains base entirely, nothing remains
+	if excl.Contains(base.IP) {
+		baseLast := lastIP(base)
+		if excl.Contains(baseLast) {
+			return nil
+		}
+	}
+
+	// If base == excl, nothing remains
+	baseOnes, baseBits := base.Mask.Size()
+	exclOnes, _ := excl.Mask.Size()
+	if baseOnes == exclOnes && base.IP.Equal(excl.IP) {
+		return nil
+	}
+
+	// Split base in half and recurse
+	nextOnes := baseOnes + 1
+	if nextOnes > baseBits {
+		return []string{base.String()}
+	}
+	half1Str := fmt.Sprintf("%s/%d", baseIP.String(), nextOnes)
+	_, h1, _ := net.ParseCIDR(half1Str)
+	if h1 == nil {
+		return []string{base.String()}
+	}
+
+	// Compute second half
+	h2IP := make(net.IP, 4)
+	copy(h2IP, h1.IP)
+	h2IP = incrementIPBy(h2IP, 1<<uint(baseBits-nextOnes))
+	h2Str := fmt.Sprintf("%s/%d", h2IP.String(), nextOnes)
+	_, h2, _ := net.ParseCIDR(h2Str)
+	if h2 == nil {
+		return []string{base.String()}
+	}
+
+	var result []string
+	result = append(result, subtractNet(h1, excl)...)
+	result = append(result, subtractNet(h2, excl)...)
+	return result
+}
+
+func lastIP(n *net.IPNet) net.IP {
+	ip := n.IP.To4()
+	if ip == nil {
+		return n.IP
+	}
+	l := make(net.IP, 4)
+	for i := 0; i < 4; i++ {
+		l[i] = ip[i] | ^n.Mask[i]
+	}
+	return l
+}
+
+func incrementIPBy(ip net.IP, n uint32) net.IP {
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return ip
+	}
+	v := (uint32(ip4[0])<<24 | uint32(ip4[1])<<16 | uint32(ip4[2])<<8 | uint32(ip4[3])) + n
+	return net.IP{byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v)}
+}
+
 // buildClientConfig assembles the WireGuard .conf for a device.
 func (s *Service) buildClientConfig(ctx context.Context, dev *db.Device, privateKey string) (string, error) {
-	subnets, err := s.db.ListSubnetsForDevice(ctx, dev.ID)
+	subnets, err := s.db.ListRoutesForDevice(ctx, dev.ID)
 	if err != nil {
 		return "", fmt.Errorf("listing subnets for device: %w", err)
 	}
 
 	allowedIPs := make([]string, 0, len(subnets)+1)
 	for _, sub := range subnets {
-		allowedIPs = append(allowedIPs, sub.CIDR)
+		if sub.IsExcluded {
+			// Excluded routes: include 0.0.0.0/0 as the base, then route out
+			// the excluded CIDR via the default gateway (not the tunnel).
+			// WireGuard doesn't support exclusions natively — we approximate
+			// by splitting the address space around the excluded block.
+			for _, split := range excludeCIDR(sub.CIDR) {
+				allowedIPs = append(allowedIPs, split)
+			}
+		} else {
+			allowedIPs = append(allowedIPs, sub.CIDR)
+		}
 	}
 
 	// Always include the VPN subnet itself so the device can reach the server
@@ -249,17 +398,50 @@ func (s *Service) buildClientConfig(ctx context.Context, dev *db.Device, private
 		}
 	}
 
-	serverPubKey, err := wireguard.ServerPublicKey(s.cfg.WireGuard.PrivateKey)
+	// Determine server public key and endpoint from group/agent config.
+	// Priority: group endpoint override > agent endpoint > global config.
+	globalPubKey, err := wireguard.ServerPublicKey(s.cfg.WireGuard.PrivateKey)
 	if err != nil {
 		return "", fmt.Errorf("deriving server public key: %w", err)
+	}
+	serverPubKey := globalPubKey
+	endpoint := s.cfg.WireGuard.Endpoint
+
+	if group, err := s.db.GetGroupByID(ctx, dev.GroupID); err == nil {
+		if group.EndpointOverride != "" {
+			endpoint = group.EndpointOverride
+		}
+		if agents, err := s.db.GetGroupAgents(ctx, dev.GroupID); err == nil {
+			for _, a := range agents {
+				if !a.IsActive {
+					continue
+				}
+				// Use agent's WireGuard public key if available.
+				// This is set when the agent connects and sends its ready message.
+				if a.WGPublicKey != "" {
+					serverPubKey = a.WGPublicKey
+				}
+				if group.EndpointOverride == "" && a.Endpoint != "" {
+					endpoint = a.Endpoint
+				}
+				break
+			}
+		}
+	}
+
+	// Use group DNS if set, otherwise fall back to global config.
+	dnsServers := s.cfg.WireGuard.DNS
+	if group, err := s.db.GetGroupByID(ctx, dev.GroupID); err == nil && group.DNS != "" {
+		// DNS stored as comma-separated string e.g. "1.1.1.1, 8.8.8.8"
+		dnsServers = strings.Split(strings.ReplaceAll(group.DNS, " ", ""), ",")
 	}
 
 	conf := wireguard.BuildClientConfig(wireguard.ClientConfigParams{
 		PrivateKey:      privateKey,
 		AssignedIP:      dev.AssignedIP,
-		DNS:             s.cfg.WireGuard.DNS,
+		DNS:             dnsServers,
 		ServerPublicKey: serverPubKey,
-		ServerEndpoint:  s.cfg.WireGuard.Endpoint, // already host:port from config
+		ServerEndpoint:  endpoint,
 		AllowedIPs:      allowedIPs,
 		MTU:             s.cfg.WireGuard.MTU,
 	})
@@ -270,7 +452,7 @@ func (s *Service) buildClientConfig(ctx context.Context, dev *db.Device, private
 // buildPeerConfigForDevice constructs a wireguard.PeerConfig from a Device.
 // Used for immediate peer addition on session activation.
 func (s *Service) buildPeerConfigForDevice(ctx context.Context, dev *db.Device) (*wireguard.PeerConfig, error) {
-	subnets, err := s.db.ListSubnetsForDevice(ctx, dev.ID)
+	subnets, err := s.db.ListRoutesForDevice(ctx, dev.ID)
 	if err != nil {
 		return nil, fmt.Errorf("listing subnets: %w", err)
 	}
@@ -335,15 +517,7 @@ func (s *Service) ApproveDevice(ctx context.Context, deviceID, adminUserID, ipAd
 		return fmt.Errorf("approving device in DB: %w", err)
 	}
 
-	if err := s.db.WriteAuditLog(ctx, &db.AuditLog{
-		UserID:    sql.NullString{String: adminUserID, Valid: true},
-		DeviceID:  sql.NullString{String: deviceID, Valid: true},
-		Event:     db.AuditEventDeviceApproved,
-		IPAddress: ipAddress,
-		Metadata:  db.AuditMeta("device_name", dev.Name),
-	}); err != nil {
-		s.log.Warn("writing device approved audit log", zap.Error(err))
-	}
+	s.WriteAdminAuditLog(ctx, adminUserID, db.AuditEventDeviceApproved, ipAddress, db.AuditMeta("device_name", dev.Name))
 
 	s.emit(Event{Type: EventDeviceApproved, DeviceID: deviceID, UserID: adminUserID, OwnerID: dev.UserID, Payload: map[string]any{"device_name": dev.Name}})
 	return nil
@@ -389,9 +563,15 @@ func (s *Service) DisableDevice(ctx context.Context, deviceID, actorUserID, ipAd
 		}
 	}
 
-	// Remove from WireGuard immediately
-	if err := s.peers.RemovePeer(dev.PublicKey); err != nil {
-		s.log.Warn("removing peer on disable", zap.String("device", dev.Name), zap.Error(err))
+	// Remove from local WireGuard unless agent-managed (agent handles its own WG).
+	if !s.groupHasActiveAgent(ctx, dev.GroupID) {
+		if err := s.peers.RemovePeer(dev.PublicKey); err != nil {
+			s.log.Warn("removing peer on disable", zap.String("device", dev.Name), zap.Error(err))
+		}
+	}
+	s.notifyAgentPeerRemove(ctx, dev)
+	if s.reconciler != nil {
+		s.reconciler.Trigger()
 	}
 
 	// Mark disabled in DB
@@ -423,10 +603,13 @@ func (s *Service) DeleteDevice(ctx context.Context, deviceID, actorUserID, ipAdd
 		return errors.New("not authorised to delete this device")
 	}
 
-	// Remove the WireGuard peer immediately.
-	if err := s.peers.RemovePeer(dev.PublicKey); err != nil {
-		s.log.Warn("removing peer on device delete", zap.String("device", dev.Name), zap.Error(err))
+	// Remove the WireGuard peer — skip local for agent-managed groups.
+	if !s.groupHasActiveAgent(ctx, dev.GroupID) {
+		if err := s.peers.RemovePeer(dev.PublicKey); err != nil {
+			s.log.Warn("removing peer on device delete", zap.String("device", dev.Name), zap.Error(err))
+		}
 	}
+	s.notifyAgentPeerRemove(ctx, dev)
 
 	if err := s.db.DeleteDevice(ctx, deviceID); err != nil {
 		return fmt.Errorf("deleting device: %w", err)
@@ -551,47 +734,50 @@ func (s *Service) ActivateSession(ctx context.Context, deviceID, userID, ipAddre
 
 	s.emit(Event{Type: EventSessionCreated, DeviceID: deviceID, UserID: userID, OwnerID: userID,
 		Payload: map[string]any{"expires_at": expiresAt}})
+	if s.reconciler != nil {
+		s.reconciler.Trigger()
+	} // push peer to agents immediately
 
-	// Add the peer to WireGuard immediately rather than waiting for the reconciler.
-	go func() {
-		defer func() {
-			if rec := recover(); rec != nil {
-				s.log.Error("PANIC adding WireGuard peer — server unaffected",
+	// Add the peer to the local WireGuard interface, unless the group is managed
+	// by a remote agent — in that case the agent handles its own WireGuard.
+	if !s.groupHasActiveAgent(ctx, dev.GroupID) {
+		go func() {
+			defer func() {
+				if rec := recover(); rec != nil {
+					s.log.Error("PANIC adding WireGuard peer — server unaffected",
+						zap.String("device", dev.Name),
+						zap.Any("panic", rec),
+					)
+				}
+			}()
+
+			peerCfg, err := s.buildPeerConfigForDevice(context.Background(), dev)
+			if err != nil {
+				s.log.Error("activating session: building peer config",
 					zap.String("device", dev.Name),
-					zap.Any("panic", rec),
+					zap.Error(err),
 				)
+				return
 			}
+			if err := s.peers.AddPeer(*peerCfg); err != nil {
+				s.log.Error("activating session: adding WireGuard peer",
+					zap.String("device", dev.Name),
+					zap.Error(err),
+				)
+				return
+			}
+			s.log.Info("peer added on session activation",
+				zap.String("device", dev.Name),
+				zap.String("ip", dev.AssignedIP),
+			)
+			s.emit(Event{Type: EventPeerAdded, DeviceID: dev.ID, OwnerID: dev.UserID})
 		}()
-
-		peerCfg, err := s.buildPeerConfigForDevice(context.Background(), dev)
-		if err != nil {
-			s.log.Error("activating session: building peer config",
-				zap.String("device", dev.Name),
-				zap.String("assigned_ip", dev.AssignedIP),
-				zap.String("public_key", dev.PublicKey),
-				zap.Error(err),
-			)
-			return
-		}
-		s.log.Debug("adding WireGuard peer",
+	} else {
+		s.log.Debug("skipping local WireGuard peer add — group is agent-managed",
 			zap.String("device", dev.Name),
-			zap.String("ip", dev.AssignedIP),
-			zap.Int("allowed_ips", len(peerCfg.AllowedIPs)),
+			zap.String("group", dev.GroupID),
 		)
-		if err := s.peers.AddPeer(*peerCfg); err != nil {
-			s.log.Error("activating session: adding WireGuard peer",
-				zap.String("device", dev.Name),
-				zap.String("assigned_ip", dev.AssignedIP),
-				zap.Error(err),
-			)
-			return
-		}
-		s.log.Info("peer added on session activation",
-			zap.String("device", dev.Name),
-			zap.String("ip", dev.AssignedIP),
-		)
-		s.emit(Event{Type: EventPeerAdded, DeviceID: dev.ID, OwnerID: dev.UserID})
-	}()
+	}
 
 	return session, nil
 }
@@ -670,6 +856,10 @@ func (s *Service) ExtendSession(ctx context.Context, sessionID, userID, ipAddres
 	}
 
 	s.emit(Event{Type: EventSessionExtended, DeviceID: dev.ID, UserID: userID})
+
+	// Notify agents with the updated ExpiresAt so they reset their local expiry timers.
+	s.notifyAgentPeerUpdate(ctx, dev, extended)
+
 	return extended, nil
 }
 
@@ -695,14 +885,19 @@ func (s *Service) RevokeSession(ctx context.Context, sessionID, actorUserID, ipA
 		return fmt.Errorf("revoking session: %w", err)
 	}
 
-	// Remove the peer immediately rather than waiting for the reconciler.
+	// Remove the peer immediately.
 	dev, err := s.db.GetDeviceByID(ctx, session.DeviceID)
 	if err == nil {
-		if err := s.peers.RemovePeer(dev.PublicKey); err != nil {
-			s.log.Warn("removing peer on revoke",
-				zap.String("device_id", dev.ID),
-				zap.Error(err),
-			)
+		if s.groupHasActiveAgent(ctx, dev.GroupID) {
+			// Agent-managed: notify agent directly for immediate removal.
+			s.notifyAgentPeerRemove(ctx, dev)
+		} else {
+			if err := s.peers.RemovePeer(dev.PublicKey); err != nil {
+				s.log.Warn("removing peer on revoke",
+					zap.String("device_id", dev.ID),
+					zap.Error(err),
+				)
+			}
 		}
 	}
 
@@ -721,6 +916,9 @@ func (s *Service) RevokeSession(ctx context.Context, sessionID, actorUserID, ipA
 		ownerID = dev.UserID
 	}
 	s.emit(Event{Type: EventSessionRevoked, DeviceID: session.DeviceID, UserID: actorUserID, OwnerID: ownerID})
+	if s.reconciler != nil {
+		s.reconciler.Trigger()
+	} // remove peer from agents immediately
 	return nil
 }
 
@@ -746,11 +944,18 @@ func (s *Service) AdminExtendSession(ctx context.Context, sessionID, adminUserID
 		s.log.Warn("writing admin session extend audit log", zap.Error(err))
 	}
 
+	// Notify agents so expiry timers are reset
+	if dev, err := s.db.GetDeviceByID(ctx, extended.DeviceID); err == nil {
+		s.notifyAgentPeerUpdate(ctx, dev, extended)
+	}
+	if s.reconciler != nil {
+		s.reconciler.Trigger()
+	}
 	return extended, nil
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Groups & Subnets
+// Groups & Routes
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ListGroupsForUser returns groups available to a user.
@@ -763,9 +968,9 @@ func (s *Service) ListAllGroups(ctx context.Context) ([]*db.Group, error) {
 	return s.db.ListGroups(ctx)
 }
 
-// ListAllSubnets returns all subnets (admin only).
-func (s *Service) ListAllSubnets(ctx context.Context) ([]*db.Subnet, error) {
-	return s.db.ListSubnets(ctx)
+// ListAllRoutes returns all subnets (admin only).
+func (s *Service) ListAllRoutes(ctx context.Context) ([]*db.Route, error) {
+	return s.db.ListRoutes(ctx)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -776,6 +981,11 @@ func (s *Service) ListAllSubnets(ctx context.Context) ([]*db.Subnet, error) {
 type HealthStatus struct {
 	Healthy bool              `json:"healthy"`
 	Checks  map[string]string `json:"checks"`
+}
+
+// Config returns the service configuration (read-only).
+func (s *Service) Config() *config.Config {
+	return s.cfg
 }
 
 // ReconcilerLastRun returns the time the reconciler last completed a pass.
@@ -824,54 +1034,119 @@ func (s *Service) Health(reconcilerLastRun time.Time) HealthStatus {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// groupHasActiveAgent returns true if the group has at least one active agent assigned.
+// For such groups, the agent manages WireGuard — the server should not touch its local
+// WireGuard interface for devices in these groups.
+func (s *Service) groupHasActiveAgent(ctx context.Context, groupID string) bool {
+	agents, err := s.db.GetGroupAgents(ctx, groupID)
+	if err != nil {
+		return false
+	}
+	for _, a := range agents {
+		if a.IsActive {
+			return true
+		}
+	}
+	return false
+}
+
 // IP allocation
 // ─────────────────────────────────────────────────────────────────────────────
 
-// allocateIP finds the next available IP in the VPN subnet.
-func (s *Service) allocateIP(ctx context.Context) (string, error) {
-	_, network, err := net.ParseCIDR(s.cfg.WireGuard.Address)
-	if err != nil {
-		return "", fmt.Errorf("parsing server VPN address %q: %w", s.cfg.WireGuard.Address, err)
+// allocateIP finds the next available IP for a device.
+// If the group has an agent with a VPN pool, allocates from that pool.
+// Otherwise falls back to the global VPN subnet from config.
+func (s *Service) allocateIP(ctx context.Context, groupID string) (string, error) {
+	// Try to get the pool from the group's assigned agent.
+	poolCIDR := ""
+	if groupID != "" {
+		if agents, err := s.db.GetGroupAgents(ctx, groupID); err == nil && len(agents) > 0 {
+			for _, a := range agents {
+				if a.VPNPool != "" {
+					poolCIDR = a.VPNPool
+					break
+				}
+			}
+		}
+	}
+	if poolCIDR == "" {
+		poolCIDR = s.cfg.WireGuard.Address
 	}
 
-	// Use ALL devices (pending, disabled, approved) so IPs are never reused.
+	_, network, err := net.ParseCIDR(poolCIDR)
+	if err != nil {
+		return "", fmt.Errorf("parsing VPN pool %q: %w", poolCIDR, err)
+	}
+
 	allDevices, err := s.db.ListAllDevices(ctx)
 	if err != nil {
 		return "", fmt.Errorf("listing devices for IP allocation: %w", err)
 	}
 
-	used := make(map[string]bool, len(allDevices)+2)
+	used := make(map[string]bool, len(allDevices)+4)
 
-	// Reserve the network address (.0) and broadcast address.
-	used[network.IP.String()] = true
+	// Reserve network address (.0) and broadcast (last address).
+	networkAddr := cloneIP4(network.IP)
+	broadcast := broadcastIP(network)
+	used[networkAddr.String()] = true
+	used[broadcast.String()] = true
 
-	// Reserve the server's own IP — normalise to 4-byte to match iterator.
+	// Reserve last usable IP — that's the agent/server interface address.
+	lastUsable := lastUsableIP(network)
+	used[lastUsable.String()] = true
+
+	// Reserve the server's own configured IP if it falls in this pool.
 	serverIP, _, _ := net.ParseCIDR(s.cfg.WireGuard.Address)
-	if ip4 := serverIP.To4(); ip4 != nil {
-		serverIP = ip4
+	if ip4 := serverIP.To4(); ip4 != nil && network.Contains(ip4) {
+		used[ip4.String()] = true
 	}
-	used[serverIP.String()] = true
 
 	for _, dev := range allDevices {
 		used[dev.AssignedIP] = true
 	}
 
-	// Walk the subnet sequentially for the next free address.
-	// cloneIP starts at network+1; server IP is in used so will be skipped.
-	for ip := cloneIP(network.IP); network.Contains(ip); incrementIP(ip) {
-		candidate := ip.String()
-		if !used[candidate] {
-			return candidate, nil
+	// Allocate bottom-up: start from .1, devices fill upward away from server.
+	ip := cloneIP4(network.IP)
+	incrementIP(ip) // skip network address
+	for network.Contains(ip) {
+		if !used[ip.String()] {
+			return ip.String(), nil
 		}
+		incrementIP(ip)
 	}
 
-	return "", errors.New("VPN subnet exhausted: no available IP addresses")
+	return "", fmt.Errorf("VPN pool %s exhausted: no available IP addresses", poolCIDR)
 }
 
-func cloneIP(ip net.IP) net.IP {
-	clone := make(net.IP, len(ip))
-	copy(clone, ip)
-	incrementIP(clone) // start from .1, not .0
+// broadcastIP returns the broadcast address of a network.
+func broadcastIP(n *net.IPNet) net.IP {
+	ip := n.IP.To4()
+	if ip == nil {
+		return n.IP
+	}
+	bcast := make(net.IP, 4)
+	for i := 0; i < 4; i++ {
+		bcast[i] = ip[i] | ^n.Mask[i]
+	}
+	return bcast
+}
+
+// lastUsableIP returns the last usable IP in a network (broadcast - 1).
+// This is reserved for the agent/server WireGuard interface.
+func lastUsableIP(n *net.IPNet) net.IP {
+	ip := broadcastIP(n)
+	clone := cloneIP4(ip)
+	decrementIP(clone)
+	return clone
+}
+
+func cloneIP4(ip net.IP) net.IP {
+	ip4 := ip.To4()
+	if ip4 == nil {
+		ip4 = ip
+	}
+	clone := make(net.IP, len(ip4))
+	copy(clone, ip4)
 	return clone
 }
 
@@ -879,6 +1154,15 @@ func incrementIP(ip net.IP) {
 	for i := len(ip) - 1; i >= 0; i-- {
 		ip[i]++
 		if ip[i] != 0 {
+			break
+		}
+	}
+}
+
+func decrementIP(ip net.IP) {
+	for i := len(ip) - 1; i >= 0; i-- {
+		ip[i]--
+		if ip[i] != 0xFF {
 			break
 		}
 	}

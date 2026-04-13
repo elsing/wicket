@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
@@ -20,14 +21,48 @@ func (s *Service) DB() *db.DB {
 }
 
 // WriteAuditLog is a convenience wrapper for admin handlers.
-func (s *Service) WriteAuditLog(ctx context.Context, deviceID, userID, event, ip string) {
+// WriteAdminAuditLog logs an admin action with optional metadata.
+func (s *Service) WriteAdminAuditLog(ctx context.Context, actorID, event, ip, metadata string) {
+	// Only set user_id if actorID refers to a row in the users table.
+	// Local admins live in local_admins and must not be passed as a users FK.
+	userID := actorID
+	if actorID != "" {
+		if _, err := s.db.GetUserByID(ctx, actorID); err != nil {
+			// Not a user — local admin or system actor. Store in metadata instead.
+			userID = ""
+			if metadata == "" {
+				metadata = "{}"
+			}
+			// Append actor to metadata
+			if metadata == "{}" {
+				metadata = `{"actor":"` + actorID + `"}`
+			}
+		}
+	}
 	if err := s.db.WriteAuditLog(ctx, &db.AuditLog{
+		UserID:    sql.NullString{String: userID, Valid: userID != ""},
+		Event:     event,
+		IPAddress: ip,
+		Metadata:  metadata,
+	}); err != nil {
+		s.log.Warn("writing admin audit log", zap.Error(err))
+	}
+}
+
+func (s *Service) WriteAuditLog(ctx context.Context, deviceID, userID, event, ip string) {
+	entry := &db.AuditLog{
 		UserID:    sql.NullString{String: userID, Valid: userID != ""},
 		DeviceID:  sql.NullString{String: deviceID, Valid: deviceID != ""},
 		Event:     event,
 		IPAddress: ip,
-	}); err != nil {
-		s.log.Warn("writing audit log", zap.Error(err))
+	}
+	if err := s.db.WriteAuditLog(ctx, entry); err != nil {
+		// FK violation — drop the offending reference and retry.
+		entry.UserID = sql.NullString{}
+		entry.DeviceID = sql.NullString{}
+		if err2 := s.db.WriteAuditLog(ctx, entry); err2 != nil {
+			s.log.Warn("writing audit log", zap.Error(err2))
+		}
 	}
 }
 

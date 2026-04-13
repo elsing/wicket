@@ -31,7 +31,7 @@ func (d *DB) GetUserByOIDCSub(ctx context.Context, sub string) (*User, error) {
 	row := d.sql.QueryRowContext(ctx,
 		`SELECT id, oidc_sub, email, display_name, is_admin, is_active,
 		        created_at, updated_at, last_login_at
-		 FROM users WHERE oidc_sub = ?`, sub)
+		 FROM users WHERE oidc_sub = $1`, sub)
 	return scanUser(row)
 }
 
@@ -39,7 +39,7 @@ func (d *DB) GetUserByID(ctx context.Context, id string) (*User, error) {
 	row := d.sql.QueryRowContext(ctx,
 		`SELECT id, oidc_sub, email, display_name, is_admin, is_active,
 		        created_at, updated_at, last_login_at
-		 FROM users WHERE id = ?`, id)
+		 FROM users WHERE id = $1`, id)
 	return scanUser(row)
 }
 
@@ -47,21 +47,21 @@ func (d *DB) GetUserByEmail(ctx context.Context, email string) (*User, error) {
 	row := d.sql.QueryRowContext(ctx,
 		`SELECT id, oidc_sub, email, display_name, is_admin, is_active,
 		        created_at, updated_at, last_login_at
-		 FROM users WHERE email = ?`, email)
+		 FROM users WHERE email = $1`, email)
 	return scanUser(row)
 }
 
 // UpsertUser creates or updates a user from OIDC claims on every login.
-// Explicitly sets is_active = 1 so new users are always active.
+// Explicitly sets is_active = TRUE so new users are always active.
 func (d *DB) UpsertUser(ctx context.Context, sub, email, displayName string) (*User, error) {
 	now := time.Now().UTC()
 	_, err := d.sql.ExecContext(ctx, `
 		INSERT INTO users (id, oidc_sub, email, display_name, is_active, is_admin, created_at, updated_at, last_login_at)
-		VALUES (?, ?, ?, ?, 1, 0, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, TRUE, FALSE, $5, $6, $7)
 		ON CONFLICT(oidc_sub) DO UPDATE SET
 			email         = excluded.email,
 			display_name  = excluded.display_name,
-			is_active     = 1,
+			is_active = TRUE,
 			updated_at    = excluded.updated_at,
 			last_login_at = excluded.last_login_at
 	`, newID(), sub, email, displayName, now, now, now)
@@ -85,12 +85,8 @@ func (d *DB) ListUsers(ctx context.Context) ([]*User, error) {
 
 // SetUserAdmin sets the is_admin flag. Uses 1/0 explicitly for SQLite compatibility.
 func (d *DB) SetUserAdmin(ctx context.Context, userID string, admin bool) error {
-	val := 0
-	if admin {
-		val = 1
-	}
 	result, err := d.sql.ExecContext(ctx,
-		`UPDATE users SET is_admin = ? WHERE id = ?`, val, userID)
+		`UPDATE users SET is_admin = $1 WHERE id = $2`, admin, userID)
 	if err != nil {
 		return fmt.Errorf("setting admin flag: %w", err)
 	}
@@ -137,15 +133,15 @@ func scanUsers(rows *sql.Rows) ([]*User, error) {
 func (d *DB) GetGroupByID(ctx context.Context, id string) (*Group, error) {
 	row := d.sql.QueryRowContext(ctx,
 		`SELECT id, name, description, session_duration, max_extensions, is_public,
-		        created_at, updated_at
-		 FROM groups WHERE id = ?`, id)
+		        endpoint_override, dns, created_at, updated_at
+		 FROM groups WHERE id = $1`, id)
 	return scanGroup(row)
 }
 
 func (d *DB) ListGroups(ctx context.Context) ([]*Group, error) {
 	rows, err := d.sql.QueryContext(ctx,
 		`SELECT id, name, description, session_duration, max_extensions, is_public,
-		        created_at, updated_at
+		        endpoint_override, dns, created_at, updated_at
 		 FROM groups ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -157,10 +153,11 @@ func (d *DB) ListGroups(ctx context.Context) ([]*Group, error) {
 func (d *DB) ListGroupsForUser(ctx context.Context, userID string) ([]*Group, error) {
 	rows, err := d.sql.QueryContext(ctx, `
 		SELECT DISTINCT g.id, g.name, g.description, g.session_duration,
-		                g.max_extensions, g.is_public, g.created_at, g.updated_at
+		                g.max_extensions, g.is_public, g.endpoint_override,
+		                g.dns, g.created_at, g.updated_at
 		FROM groups g
-		LEFT JOIN user_groups ug ON ug.group_id = g.id AND ug.user_id = ?
-		WHERE g.is_public = 1 OR ug.user_id IS NOT NULL
+		LEFT JOIN user_groups ug ON ug.group_id = g.id AND ug.user_id = $1
+		WHERE g.is_public = TRUE OR ug.user_id IS NOT NULL
 		ORDER BY g.name
 	`, userID)
 	if err != nil {
@@ -173,14 +170,11 @@ func (d *DB) ListGroupsForUser(ctx context.Context, userID string) ([]*Group, er
 func (d *DB) CreateGroup(ctx context.Context, name, description string, sessionDuration time.Duration, maxExtensions *int64, isPublic bool) (*Group, error) {
 	id := newID()
 	now := time.Now().UTC()
-	isPublicInt := 0
-	if isPublic {
-		isPublicInt = 1
-	}
 	_, err := d.sql.ExecContext(ctx,
 		`INSERT INTO groups (id, name, description, session_duration, max_extensions, is_public, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, name, description, int64(sessionDuration.Seconds()), maxExtensions, isPublicInt, now, now,
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		ON CONFLICT DO NOTHING`,
+		id, name, description, int64(sessionDuration.Seconds()), maxExtensions, isPublic, now, now,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("creating group: %w", err)
@@ -194,6 +188,7 @@ func scanGroup(row *sql.Row) (*Group, error) {
 	err := row.Scan(
 		&g.ID, &g.Name, &g.Description, &sessionSecs,
 		&g.MaxExtensions, &g.IsPublic,
+		&g.EndpointOverride, &g.DNS,
 		&g.CreatedAt, &g.UpdatedAt,
 	)
 	if err != nil {
@@ -211,6 +206,7 @@ func scanGroups(rows *sql.Rows) ([]*Group, error) {
 		if err := rows.Scan(
 			&g.ID, &g.Name, &g.Description, &sessionSecs,
 			&g.MaxExtensions, &g.IsPublic,
+			&g.EndpointOverride, &g.DNS,
 			&g.CreatedAt, &g.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -222,38 +218,38 @@ func scanGroups(rows *sql.Rows) ([]*Group, error) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Subnets
+// Routes
 // ─────────────────────────────────────────────────────────────────────────────
 
-func (d *DB) GetSubnetByID(ctx context.Context, id string) (*Subnet, error) {
+func (d *DB) GetRouteByID(ctx context.Context, id string) (*Route, error) {
 	row := d.sql.QueryRowContext(ctx,
-		`SELECT id, name, cidr, description, created_at, updated_at FROM subnets WHERE id = ?`, id)
-	return scanSubnet(row)
+		`SELECT id, name, cidr, description, is_excluded, created_at, updated_at FROM subnets WHERE id = $1`, id)
+	return scanRoute(row)
 }
 
-func (d *DB) ListSubnets(ctx context.Context) ([]*Subnet, error) {
+func (d *DB) ListRoutes(ctx context.Context) ([]*Route, error) {
 	rows, err := d.sql.QueryContext(ctx,
-		`SELECT id, name, cidr, description, created_at, updated_at FROM subnets ORDER BY name`)
+		`SELECT id, name, cidr, description, is_excluded, created_at, updated_at FROM subnets ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	return scanSubnets(rows)
+	return scanRoutes(rows)
 }
 
-func (d *DB) ListSubnetsForDevice(ctx context.Context, deviceID string) ([]*Subnet, error) {
+func (d *DB) ListRoutesForDevice(ctx context.Context, deviceID string) ([]*Route, error) {
 	rows, err := d.sql.QueryContext(ctx, `
-		SELECT s.id, s.name, s.cidr, s.description, s.created_at, s.updated_at
+		SELECT s.id, s.name, s.cidr, s.description, s.is_excluded, s.created_at, s.updated_at
 		FROM device_subnets ds
-		JOIN subnets s ON s.id = ds.subnet_id
-		WHERE ds.device_id = ?
+		JOIN subnets s ON s.id = ds.route_id
+		WHERE ds.device_id = $1
 		ORDER BY s.name
 	`, deviceID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	subnets, err := scanSubnets(rows)
+	subnets, err := scanRoutes(rows)
 	if err != nil {
 		return nil, err
 	}
@@ -262,48 +258,49 @@ func (d *DB) ListSubnetsForDevice(ctx context.Context, deviceID string) ([]*Subn
 	}
 	// Fall back to group subnets
 	rows2, err := d.sql.QueryContext(ctx, `
-		SELECT s.id, s.name, s.cidr, s.description, s.created_at, s.updated_at
+		SELECT s.id, s.name, s.cidr, s.description, s.is_excluded, s.created_at, s.updated_at
 		FROM group_subnets gs
-		JOIN subnets s ON s.id = gs.subnet_id
+		JOIN subnets s ON s.id = gs.route_id
 		JOIN devices d ON d.group_id = gs.group_id
-		WHERE d.id = ?
+		WHERE d.id = $1
 		ORDER BY s.name
 	`, deviceID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows2.Close()
-	return scanSubnets(rows2)
+	return scanRoutes(rows2)
 }
 
-func (d *DB) CreateSubnet(ctx context.Context, name, cidr, description string) (*Subnet, error) {
+func (d *DB) CreateRoute(ctx context.Context, name, cidr, description string, isExcluded bool) (*Route, error) {
 	id := newID()
 	now := time.Now().UTC()
 	_, err := d.sql.ExecContext(ctx,
-		`INSERT INTO subnets (id, name, cidr, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		id, name, cidr, description, now, now,
+		`INSERT INTO subnets (id, name, cidr, description, is_excluded, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT DO NOTHING`,
+		id, name, cidr, description, isExcluded, now, now,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("creating subnet: %w", err)
 	}
-	return d.GetSubnetByID(ctx, id)
+	return d.GetRouteByID(ctx, id)
 }
 
-func scanSubnet(row *sql.Row) (*Subnet, error) {
-	var s Subnet
-	return &s, row.Scan(&s.ID, &s.Name, &s.CIDR, &s.Description, &s.CreatedAt, &s.UpdatedAt)
+func scanRoute(row *sql.Row) (*Route, error) {
+	var s Route
+	return &s, row.Scan(&s.ID, &s.Name, &s.CIDR, &s.Description, &s.IsExcluded, &s.CreatedAt, &s.UpdatedAt)
 }
 
-func scanSubnets(rows *sql.Rows) ([]*Subnet, error) {
-	var subnets []*Subnet
+func scanRoutes(rows *sql.Rows) ([]*Route, error) {
+	var routes []*Route
 	for rows.Next() {
-		var s Subnet
-		if err := rows.Scan(&s.ID, &s.Name, &s.CIDR, &s.Description, &s.CreatedAt, &s.UpdatedAt); err != nil {
+		var s Route
+		if err := rows.Scan(&s.ID, &s.Name, &s.CIDR, &s.Description, &s.IsExcluded, &s.CreatedAt, &s.UpdatedAt); err != nil {
 			return nil, err
 		}
-		subnets = append(subnets, &s)
+		routes = append(routes, &s)
 	}
-	return subnets, rows.Err()
+	return routes, rows.Err()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -311,17 +308,17 @@ func scanSubnets(rows *sql.Rows) ([]*Subnet, error) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 func (d *DB) GetDeviceByID(ctx context.Context, id string) (*Device, error) {
-	row := d.sql.QueryRowContext(ctx, deviceSelectSQL+` WHERE id = ?`, id)
+	row := d.sql.QueryRowContext(ctx, deviceSelectSQL+` WHERE id = $1`, id)
 	return scanDevice(row)
 }
 
 func (d *DB) GetDeviceByPublicKey(ctx context.Context, key string) (*Device, error) {
-	row := d.sql.QueryRowContext(ctx, deviceSelectSQL+` WHERE public_key = ?`, key)
+	row := d.sql.QueryRowContext(ctx, deviceSelectSQL+` WHERE public_key = $1`, key)
 	return scanDevice(row)
 }
 
 func (d *DB) ListDevicesByUser(ctx context.Context, userID string) ([]*Device, error) {
-	rows, err := d.sql.QueryContext(ctx, deviceSelectSQL+` WHERE user_id = ? ORDER BY name`, userID)
+	rows, err := d.sql.QueryContext(ctx, deviceSelectSQL+` WHERE user_id = $1 ORDER BY name`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -372,6 +369,41 @@ func (d *DB) ListAllDevicesRaw(ctx context.Context) ([]*Device, error) {
 	return scanDevices(rows)
 }
 
+func (d *DB) ListDevicesForGroup(ctx context.Context, groupID string) ([]*Device, error) {
+	rows, err := d.sql.QueryContext(ctx, `
+		SELECT d.id, d.user_id, d.group_id, d.name, d.public_key, d.assigned_ip,
+		       d.is_approved, d.is_active, d.auto_renew, d.config_downloaded,
+		       d.created_at, d.updated_at, d.last_seen_at,
+		       u.email, u.display_name, g.name as group_name
+		FROM devices d
+		LEFT JOIN users u ON u.id = d.user_id
+		LEFT JOIN groups g ON g.id = d.group_id
+		WHERE d.group_id = $1
+		ORDER BY d.created_at DESC`, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var devices []*Device
+	for rows.Next() {
+		var dev Device
+		var userEmail, userDisplay, groupName sql.NullString
+		if err := rows.Scan(
+			&dev.ID, &dev.UserID, &dev.GroupID, &dev.Name,
+			&dev.PublicKey, &dev.AssignedIP,
+			&dev.IsApproved, &dev.IsActive, &dev.AutoRenew, &dev.ConfigDownloaded,
+			&dev.CreatedAt, &dev.UpdatedAt, &dev.LastSeenAt,
+			&userEmail, &userDisplay, &groupName,
+		); err != nil {
+			return nil, err
+		}
+		dev.User = &User{ID: dev.UserID, Email: userEmail.String, DisplayName: userDisplay.String}
+		dev.Group = &Group{ID: dev.GroupID, Name: groupName.String}
+		devices = append(devices, &dev)
+	}
+	return devices, rows.Err()
+}
+
 func (d *DB) ListPendingDevices(ctx context.Context) ([]*Device, error) {
 	rows, err := d.sql.QueryContext(ctx, `
 		SELECT d.id, d.user_id, d.group_id, d.name, d.public_key, d.assigned_ip,
@@ -381,7 +413,7 @@ func (d *DB) ListPendingDevices(ctx context.Context) ([]*Device, error) {
 		FROM devices d
 		LEFT JOIN users u ON u.id = d.user_id
 		LEFT JOIN groups g ON g.id = d.group_id
-		WHERE d.is_approved = 0 ORDER BY d.created_at ASC`)
+		WHERE d.is_approved = FALSE ORDER BY d.created_at ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -407,7 +439,7 @@ func (d *DB) ListPendingDevices(ctx context.Context) ([]*Device, error) {
 }
 
 func (d *DB) ListApprovedActiveDevices(ctx context.Context) ([]*Device, error) {
-	rows, err := d.sql.QueryContext(ctx, deviceSelectSQL+` WHERE is_approved = 1 AND is_active = 1`)
+	rows, err := d.sql.QueryContext(ctx, deviceSelectSQL+` WHERE is_approved = TRUE AND is_active = TRUE`)
 	if err != nil {
 		return nil, err
 	}
@@ -423,7 +455,8 @@ func (d *DB) CreateDevice(ctx context.Context, dev *Device) (*Device, error) {
 			(id, user_id, group_id, name, public_key, assigned_ip,
 			 is_approved, is_active, auto_renew, config_downloaded,
 			 created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, 0, 1, 0, 0, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6, FALSE, TRUE, FALSE, FALSE, $7, $8)
+		ON CONFLICT DO NOTHING
 	`, dev.ID, dev.UserID, dev.GroupID, dev.Name, dev.PublicKey, dev.AssignedIP, now, now)
 	if err != nil {
 		return nil, fmt.Errorf("creating device: %w", err)
@@ -432,35 +465,40 @@ func (d *DB) CreateDevice(ctx context.Context, dev *Device) (*Device, error) {
 }
 
 func (d *DB) ApproveDevice(ctx context.Context, id string) error {
-	_, err := d.sql.ExecContext(ctx, `UPDATE devices SET is_approved = 1 WHERE id = ?`, id)
+	_, err := d.sql.ExecContext(ctx, `UPDATE devices SET is_approved = TRUE WHERE id = $1`, id)
 	return err
 }
 
 func (d *DB) RejectDevice(ctx context.Context, id string) error {
-	_, err := d.sql.ExecContext(ctx, `DELETE FROM devices WHERE id = ? AND is_approved = 0`, id)
+	_, err := d.sql.ExecContext(ctx, `DELETE FROM devices WHERE id = $1 AND is_approved = FALSE`, id)
 	return err
 }
 
-func (d *DB) SetDeviceActive(ctx context.Context, id string, active bool) error {
-	val := 0
-	if active {
-		val = 1
+func (d *DB) RenameDevice(ctx context.Context, deviceID, name string) error {
+	result, err := d.sql.ExecContext(ctx,
+		`UPDATE devices SET name = $1 WHERE id = $2`, name, deviceID)
+	if err != nil {
+		return err
 	}
-	_, err := d.sql.ExecContext(ctx, `UPDATE devices SET is_active = ? WHERE id = ?`, val, id)
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("device not found")
+	}
+	return nil
+}
+
+func (d *DB) SetDeviceActive(ctx context.Context, id string, active bool) error {
+	_, err := d.sql.ExecContext(ctx, `UPDATE devices SET is_active = $1 WHERE id = $2`, active, id)
 	return err
 }
 
 func (d *DB) SetDeviceAutoRenew(ctx context.Context, id string, autoRenew bool) error {
-	val := 0
-	if autoRenew {
-		val = 1
-	}
-	_, err := d.sql.ExecContext(ctx, `UPDATE devices SET auto_renew = ? WHERE id = ?`, val, id)
+	_, err := d.sql.ExecContext(ctx, `UPDATE devices SET auto_renew = $1 WHERE id = $2`, autoRenew, id)
 	return err
 }
 
 func (d *DB) MarkConfigDownloaded(ctx context.Context, id string) error {
-	_, err := d.sql.ExecContext(ctx, `UPDATE devices SET config_downloaded = 1 WHERE id = ?`, id)
+	_, err := d.sql.ExecContext(ctx, `UPDATE devices SET config_downloaded = TRUE WHERE id = $1`, id)
 	return err
 }
 
@@ -508,7 +546,7 @@ func (d *DB) GetActiveSessionForDevice(ctx context.Context, deviceID string) (*S
 		SELECT id, device_id, authed_at, expires_at, extended_at,
 		       extension_count, revoked_at, revoked_by, ip_address, status
 		FROM sessions
-		WHERE device_id = ? AND status = 'active' AND expires_at > ?
+		WHERE device_id = $1 AND status = 'active' AND expires_at > $2
 		ORDER BY authed_at DESC LIMIT 1
 	`, deviceID, time.Now().UTC())
 	return scanSession(row)
@@ -518,7 +556,7 @@ func (d *DB) GetSessionByID(ctx context.Context, id string) (*Session, error) {
 	row := d.sql.QueryRowContext(ctx, `
 		SELECT id, device_id, authed_at, expires_at, extended_at,
 		       extension_count, revoked_at, revoked_by, ip_address, status
-		FROM sessions WHERE id = ?
+		FROM sessions WHERE id = $1
 	`, id)
 	return scanSession(row)
 }
@@ -528,7 +566,8 @@ func (d *DB) CreateSession(ctx context.Context, deviceID string, expiresAt time.
 	now := time.Now().UTC()
 	_, err := d.sql.ExecContext(ctx, `
 		INSERT INTO sessions (id, device_id, authed_at, expires_at, ip_address, status)
-		VALUES (?, ?, ?, ?, ?, 'active')
+		VALUES ($1, $2, $3, $4, $5, 'active')
+		ON CONFLICT DO NOTHING
 	`, id, deviceID, now, expiresAt, ipAddress)
 	if err != nil {
 		return nil, fmt.Errorf("creating session: %w", err)
@@ -547,10 +586,10 @@ func (d *DB) ExtendSession(ctx context.Context, id string, by time.Duration) (*S
 	now := time.Now().UTC()
 	_, err = d.sql.ExecContext(ctx, `
 		UPDATE sessions
-		SET expires_at      = ?,
-		    extended_at     = ?,
+		SET expires_at      = $1,
+		    extended_at     = $2,
 		    extension_count = extension_count + 1
-		WHERE id = ? AND status = 'active'
+		WHERE id = $3 AND status = 'active'
 	`, newExpiry, now, id)
 	if err != nil {
 		return nil, fmt.Errorf("extending session: %w", err)
@@ -561,8 +600,8 @@ func (d *DB) ExtendSession(ctx context.Context, id string, by time.Duration) (*S
 func (d *DB) RevokeSession(ctx context.Context, id, revokedBy string) error {
 	now := time.Now().UTC()
 	_, err := d.sql.ExecContext(ctx, `
-		UPDATE sessions SET status = 'revoked', revoked_at = ?, revoked_by = ?
-		WHERE id = ?
+		UPDATE sessions SET status = 'revoked', revoked_at = $1, revoked_by = $2
+		WHERE id = $3
 	`, now, revokedBy, id)
 	return err
 }
@@ -570,7 +609,7 @@ func (d *DB) RevokeSession(ctx context.Context, id, revokedBy string) error {
 func (d *DB) MarkExpiredSessions(ctx context.Context) (int64, error) {
 	result, err := d.sql.ExecContext(ctx, `
 		UPDATE sessions SET status = 'expired'
-		WHERE status = 'active' AND expires_at <= ?
+		WHERE status = 'active' AND expires_at <= $1
 	`, time.Now().UTC())
 	if err != nil {
 		return 0, err
@@ -586,7 +625,7 @@ func (d *DB) ListActiveSessions(ctx context.Context) ([]*Session, error) {
 		FROM sessions s
 		LEFT JOIN devices d ON d.id = s.device_id
 		LEFT JOIN users u ON u.id = d.user_id
-		WHERE s.status = 'active' AND s.expires_at > ?
+		WHERE s.status = 'active' AND s.expires_at > $1
 		ORDER BY s.expires_at ASC
 	`, time.Now().UTC())
 	if err != nil {
@@ -631,16 +670,12 @@ func scanSession(row *sql.Row) (*Session, error) {
 // Agents
 // ─────────────────────────────────────────────────────────────────────────────
 
-func (d *DB) GetAgentByID(ctx context.Context, id string) (*Agent, error) {
-	row := d.sql.QueryRowContext(ctx,
-		`SELECT id, name, description, token, is_active, last_seen_at, created_at, updated_at
-		 FROM agents WHERE id = ?`, id)
-	return scanAgent(row)
-}
+// GetAgentByID is defined in queries_extra.go
 
 func (d *DB) ListAgents(ctx context.Context) ([]*Agent, error) {
 	rows, err := d.sql.QueryContext(ctx,
-		`SELECT id, name, description, token, is_active, last_seen_at, created_at, updated_at
+		`SELECT id, name, description, token, vpn_pool, endpoint, wg_public_key,
+		        is_active, last_seen_at, created_at
 		 FROM agents ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -651,7 +686,8 @@ func (d *DB) ListAgents(ctx context.Context) ([]*Agent, error) {
 		var a Agent
 		if err := rows.Scan(
 			&a.ID, &a.Name, &a.Description, &a.TokenHash,
-			&a.IsActive, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt,
+			&a.VPNPool, &a.Endpoint, &a.WGPublicKey,
+			&a.IsActive, &a.LastSeenAt, &a.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -660,13 +696,14 @@ func (d *DB) ListAgents(ctx context.Context) ([]*Agent, error) {
 	return agents, rows.Err()
 }
 
-func (d *DB) CreateAgent(ctx context.Context, name, description, tokenHash string) (*Agent, error) {
+func (d *DB) CreateAgent(ctx context.Context, name, description, tokenHash, vpnPool, endpoint string) (*Agent, error) {
 	id := newID()
 	now := time.Now().UTC()
 	_, err := d.sql.ExecContext(ctx,
-		`INSERT INTO agents (id, name, description, token, is_active, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, 1, ?, ?)`,
-		id, name, description, tokenHash, now, now,
+		`INSERT INTO agents (id, name, description, token, vpn_pool, endpoint, is_active, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, TRUE, $7)
+		ON CONFLICT DO NOTHING`,
+		id, name, description, tokenHash, vpnPool, endpoint, now,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("creating agent: %w", err)
@@ -676,14 +713,15 @@ func (d *DB) CreateAgent(ctx context.Context, name, description, tokenHash strin
 
 func (d *DB) TouchAgentSeen(ctx context.Context, id string) error {
 	_, err := d.sql.ExecContext(ctx,
-		`UPDATE agents SET last_seen_at = ? WHERE id = ?`, time.Now().UTC(), id)
+		`UPDATE agents SET last_seen_at = $1 WHERE id = $2`, time.Now().UTC(), id)
 	return err
 }
 
 func (d *DB) GetActiveAgents(ctx context.Context) ([]*Agent, error) {
 	rows, err := d.sql.QueryContext(ctx,
-		`SELECT id, name, description, token, is_active, last_seen_at, created_at, updated_at
-		 FROM agents WHERE is_active = 1`)
+		`SELECT id, name, description, token, vpn_pool, endpoint, wg_public_key,
+		        is_active, last_seen_at, created_at
+		 FROM agents WHERE is_active = TRUE`)
 	if err != nil {
 		return nil, err
 	}
@@ -693,7 +731,8 @@ func (d *DB) GetActiveAgents(ctx context.Context) ([]*Agent, error) {
 		var a Agent
 		if err := rows.Scan(
 			&a.ID, &a.Name, &a.Description, &a.TokenHash,
-			&a.IsActive, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt,
+			&a.VPNPool, &a.Endpoint, &a.WGPublicKey,
+			&a.IsActive, &a.LastSeenAt, &a.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -702,14 +741,7 @@ func (d *DB) GetActiveAgents(ctx context.Context) ([]*Agent, error) {
 	return agents, rows.Err()
 }
 
-func scanAgent(row *sql.Row) (*Agent, error) {
-	var a Agent
-	err := row.Scan(
-		&a.ID, &a.Name, &a.Description, &a.TokenHash,
-		&a.IsActive, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt,
-	)
-	return &a, err
-}
+// scanAgent removed - use GetAgentByID in queries_extra.go
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Metrics
@@ -720,7 +752,8 @@ func (d *DB) InsertMetricSnapshot(ctx context.Context, snap *MetricSnapshot) err
 	snap.RecordedAt = time.Now().UTC()
 	_, err := d.sql.ExecContext(ctx, `
 		INSERT INTO metric_snapshots (id, device_id, bytes_sent, bytes_received, last_handshake, recorded_at)
-		VALUES (?, ?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT DO NOTHING
 	`, snap.ID, snap.DeviceID, snap.BytesSent, snap.BytesReceived, snap.LastHandshake, snap.RecordedAt)
 	return err
 }
@@ -729,7 +762,7 @@ func (d *DB) ListMetricSnapshotsForDevice(ctx context.Context, deviceID string, 
 	rows, err := d.sql.QueryContext(ctx, `
 		SELECT id, device_id, bytes_sent, bytes_received, last_handshake, recorded_at
 		FROM metric_snapshots
-		WHERE device_id = ? AND recorded_at >= ?
+		WHERE device_id = $1 AND recorded_at >= $2
 		ORDER BY recorded_at ASC
 	`, deviceID, since)
 	if err != nil {
@@ -752,7 +785,7 @@ func (d *DB) ListMetricSnapshotsForDevice(ctx context.Context, deviceID string, 
 
 func (d *DB) PruneOldMetrics(ctx context.Context, before time.Time) (int64, error) {
 	result, err := d.sql.ExecContext(ctx,
-		`DELETE FROM metric_snapshots WHERE recorded_at < ?`, before)
+		`DELETE FROM metric_snapshots WHERE recorded_at < $1`, before)
 	if err != nil {
 		return 0, err
 	}
@@ -771,7 +804,8 @@ func (d *DB) WriteAuditLog(ctx context.Context, entry *AuditLog) error {
 	}
 	_, err := d.sql.ExecContext(ctx, `
 		INSERT INTO audit_log (id, user_id, device_id, agent_id, event, metadata, ip_address, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		ON CONFLICT DO NOTHING
 	`, entry.ID, entry.UserID, entry.DeviceID, entry.AgentID,
 		entry.Event, entry.Metadata, entry.IPAddress, entry.CreatedAt)
 	return err
@@ -784,7 +818,7 @@ func (d *DB) ListAuditLog(ctx context.Context, limit int) ([]*AuditLog, error) {
 		FROM audit_log a
 		LEFT JOIN users u ON u.id = a.user_id
 		LEFT JOIN devices dev ON dev.id = a.device_id
-		ORDER BY a.created_at DESC LIMIT ?
+		ORDER BY a.created_at DESC LIMIT $1
 	`, limit)
 	if err != nil {
 		return nil, err

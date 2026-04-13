@@ -13,6 +13,9 @@ config.yaml
 *.db-shm
 .DS_Store
 
+# Claude
+.claude
+
 # Runtime
 /data/
 /var/run/wicket/

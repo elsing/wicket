@@ -43,7 +43,9 @@ func renderAdminUsers(w http.ResponseWriter, r *http.Request, data AdminUsersDat
 func renderAdminGroups(w http.ResponseWriter, r *http.Request, data AdminGroupsData) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// For HTMX requests targeting the groups list, return only the fragment
+	// and trigger a form reset so the create form clears.
 	if r.Header.Get("HX-Request") == "true" {
+		w.Header().Set("HX-Trigger", `{"resetGroupForm": true}`)
 		GroupsList(data).Render(r.Context(), w) //nolint:errcheck
 		return
 	}
@@ -54,23 +56,32 @@ func renderGroupCard(w http.ResponseWriter, r *http.Request, data AdminGroupsDat
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	for _, g := range data.Groups {
 		if g.ID == groupID {
-			GroupCard(g, data.Subnets, data.GroupSubnets, data.DeviceCounts[g.ID]).Render(r.Context(), w) //nolint:errcheck
+			GroupCard(g, data.Routes, data.GroupRoutes, data.DeviceCounts[g.ID], data).Render(r.Context(), w) //nolint:errcheck
 			return
 		}
 	}
 }
 
-func renderAdminSubnets(w http.ResponseWriter, r *http.Request, data AdminSubnetsData) {
+func renderAdminRoutes(w http.ResponseWriter, r *http.Request, data AdminRoutesData) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if r.Header.Get("HX-Request") == "true" {
-		SubnetRows(data).Render(r.Context(), w) //nolint:errcheck
+		RouteRows(data).Render(r.Context(), w) //nolint:errcheck
 		return
 	}
-	AdminSubnetsPage(data).Render(r.Context(), w) //nolint:errcheck
+	AdminRoutesPage(data).Render(r.Context(), w) //nolint:errcheck
+}
+
+func renderAgentCard(w http.ResponseWriter, r *http.Request, a *db.Agent, data AdminAgentsData) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	AgentCard(a, data).Render(r.Context(), w) //nolint:errcheck
 }
 
 func renderAdminAgents(w http.ResponseWriter, r *http.Request, data AdminAgentsData) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if r.Header.Get("HX-Request") == "true" {
+		AgentsList(data).Render(r.Context(), w) //nolint:errcheck
+		return
+	}
 	AdminAgentsPage(data).Render(r.Context(), w) //nolint:errcheck
 }
 

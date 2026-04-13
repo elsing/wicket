@@ -8,106 +8,273 @@ import (
 	"sort"
 	"strings"
 
-	_ "modernc.org/sqlite" // pure-Go SQLite driver, registers as "sqlite"
+	_ "github.com/jackc/pgx/v5/stdlib" // registers "pgx" driver
 )
 
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
-// DB wraps sql.DB and provides all query methods for wicket.
+// DB wraps a *sql.DB backed by PostgreSQL.
 type DB struct {
 	sql *sql.DB
 }
 
-// Open opens (or creates) the SQLite database at path, applies all pending
-// migrations, and returns a ready-to-use DB.
-func Open(path string) (*DB, error) {
-	// WAL mode allows concurrent readers with one writer.
-	// _busy_timeout=15000: wait up to 15s for locks before returning SQLITE_BUSY.
-	// _synchronous=NORMAL: safe with WAL, faster than FULL.
-	// _txlock=immediate: grab write lock immediately on BEGIN to avoid deadlocks.
-	dsn := fmt.Sprintf(
-		"file:%s?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=15000&_synchronous=NORMAL&_txlock=immediate",
-		path,
-	)
-
-	sqlDB, err := sql.Open("sqlite", dsn)
+// Open opens a connection to the PostgreSQL database at dsn, applies all
+// pending migrations, and returns a ready-to-use DB.
+// dsn format: "postgres://user:pass@host:5432/dbname?sslmode=disable"
+func Open(dsn string) (*DB, error) {
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
-		return nil, fmt.Errorf("opening sqlite: %w", err)
+		return nil, fmt.Errorf("opening postgres: %w", err)
 	}
 
-	// WAL mode supports multiple concurrent readers.
-	// Allow up to 4 open connections: typically 1 writer + a few readers.
-	// The busy_timeout handles the case where a writer is already active.
-	sqlDB.SetMaxOpenConns(4)
-	sqlDB.SetMaxIdleConns(4)
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(5)
 
-	if err := sqlDB.Ping(); err != nil {
-		return nil, fmt.Errorf("pinging sqlite: %w", err)
+	if err := db.Ping(); err != nil {
+		return nil, fmt.Errorf("pinging postgres: %w", err)
 	}
 
-	if err := runMigrations(sqlDB); err != nil {
+	if err := runMigrations(db); err != nil {
 		return nil, fmt.Errorf("running migrations: %w", err)
 	}
 
-	return &DB{sql: sqlDB}, nil
+	return &DB{sql: db}, nil
 }
 
-// Close closes the underlying database connection.
+// Close closes the database connection pool.
 func (d *DB) Close() error { return d.sql.Close() }
 
-// SQL returns the underlying *sql.DB for complex queries.
+// SQL returns the underlying *sql.DB.
 func (d *DB) SQL() *sql.DB { return d.sql }
+
+// ReadSQL returns the same pool — Postgres handles concurrency natively.
+func (d *DB) ReadSQL() *sql.DB { return d.sql }
 
 // Ping checks the database is reachable.
 func (d *DB) Ping() error { return d.sql.Ping() }
 
-// runMigrations applies .up.sql files from the embedded migrations directory
-// that have not yet been applied. Tracks state in a schema_migrations table.
+// runMigrations applies pending .up.sql files from the embedded migrations dir.
+// State is tracked in a schema_migrations table.
 func runMigrations(db *sql.DB) error {
-	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
-		version TEXT NOT NULL PRIMARY KEY,
-		applied_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-	)`)
-	if err != nil {
-		return fmt.Errorf("creating schema_migrations table: %w", err)
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			version    TEXT NOT NULL PRIMARY KEY,
+			applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)
+	`); err != nil {
+		return fmt.Errorf("creating schema_migrations: %w", err)
 	}
 
 	entries, err := fs.ReadDir(migrationsFS, "migrations")
 	if err != nil {
-		return fmt.Errorf("reading migrations directory: %w", err)
+		return fmt.Errorf("reading migrations dir: %w", err)
 	}
 
-	var upFiles []string
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".up.sql") {
-			upFiles = append(upFiles, e.Name())
-		}
-	}
-	sort.Strings(upFiles)
+	// Sort by filename so migrations run in order.
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Name() < entries[j].Name()
+	})
 
-	for _, name := range upFiles {
-		var count int
-		if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version = ?`, name).Scan(&count); err != nil {
-			return fmt.Errorf("checking migration %s: %w", name, err)
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".up.sql") {
+			continue
 		}
-		if count > 0 {
+		version := strings.TrimSuffix(name, ".up.sql")
+
+		var applied bool
+		err := db.QueryRow(
+			`SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = $1)`,
+			version,
+		).Scan(&applied)
+		if err != nil {
+			return fmt.Errorf("checking migration %s: %w", version, err)
+		}
+		if applied {
 			continue
 		}
 
-		content, err := migrationsFS.ReadFile("migrations/" + name)
+		data, err := migrationsFS.ReadFile("migrations/" + name)
 		if err != nil {
 			return fmt.Errorf("reading migration %s: %w", name, err)
 		}
 
-		if _, err := db.Exec(string(content)); err != nil {
+		if err := execMigration(db, string(data)); err != nil {
 			return fmt.Errorf("applying migration %s: %w", name, err)
 		}
 
-		if _, err := db.Exec(`INSERT INTO schema_migrations (version) VALUES (?)`, name); err != nil {
-			return fmt.Errorf("recording migration %s: %w", name, err)
+		if _, err := db.Exec(
+			`INSERT INTO schema_migrations (version) VALUES ($1)`,
+			version,
+		); err != nil {
+			return fmt.Errorf("recording migration %s: %w", version, err)
 		}
 	}
-
 	return nil
+}
+
+// execMigration runs each statement in a migration individually.
+// Ignores empty statements. Skips ADD COLUMN if column already exists.
+// Skips RENAME COLUMN if source doesn't exist or target already does.
+func execMigration(db *sql.DB, sqlStr string) error {
+	stmts := splitStatements(sqlStr)
+	for _, stmt := range stmts {
+		stmt = strings.TrimSpace(stmt)
+		if stmt == "" {
+			continue
+		}
+
+		if isAddColumn(stmt) {
+			table, col := parseAddColumn(stmt)
+			if table != "" && col != "" {
+				exists, err := columnExists(db, table, col)
+				if err != nil {
+					return err
+				}
+				if exists {
+					continue
+				}
+			}
+		}
+
+		if isRenameColumn(stmt) {
+			table, oldCol, newCol := parseRenameColumn(stmt)
+			if table != "" {
+				srcExists, err := columnExists(db, table, oldCol)
+				if err != nil {
+					return err
+				}
+				if !srcExists {
+					continue
+				}
+				dstExists, err := columnExists(db, table, newCol)
+				if err != nil {
+					return err
+				}
+				if dstExists {
+					continue
+				}
+			}
+		}
+
+		if _, err := db.Exec(stmt); err != nil {
+			// IF NOT EXISTS statements are idempotent — skip duplicate object errors.
+			errMsg := err.Error()
+			if strings.Contains(errMsg, "already exists") {
+				continue
+			}
+			return fmt.Errorf("executing statement: %w\nSQL: %s", err, stmt)
+		}
+	}
+	return nil
+}
+
+func columnExists(db *sql.DB, table, column string) (bool, error) {
+	var exists bool
+	err := db.QueryRow(`
+		SELECT EXISTS(
+			SELECT 1 FROM information_schema.columns
+			WHERE table_name = $1 AND column_name = $2
+		)
+	`, strings.ToLower(table), strings.ToLower(column)).Scan(&exists)
+	return exists, err
+}
+
+func isAddColumn(stmt string) bool {
+	upper := strings.ToUpper(strings.TrimSpace(stmt))
+	return strings.HasPrefix(upper, "ALTER TABLE") && strings.Contains(upper, "ADD COLUMN")
+}
+
+func parseAddColumn(stmt string) (table, column string) {
+	words := strings.Fields(stmt)
+	if len(words) >= 6 {
+		return words[2], words[5]
+	}
+	return "", ""
+}
+
+func isRenameColumn(stmt string) bool {
+	upper := strings.ToUpper(strings.TrimSpace(stmt))
+	return strings.HasPrefix(upper, "ALTER TABLE") && strings.Contains(upper, "RENAME COLUMN")
+}
+
+func parseRenameColumn(stmt string) (table, oldCol, newCol string) {
+	words := strings.Fields(stmt)
+	if len(words) >= 8 {
+		return words[2], words[5], words[7]
+	}
+	return "", "", ""
+}
+
+// splitStatements splits SQL on semicolons, respecting BEGIN...END blocks.
+// Strips inline -- comments before splitting.
+func splitStatements(src string) []string {
+	cleaned := stripInlineComments(src)
+	var stmts []string
+	var cur strings.Builder
+	depth := 0
+	i := 0
+	n := len(cleaned)
+	for i < n {
+		if strings.ToUpper(cleaned[i:min(i+5, n)]) == "BEGIN" &&
+			(i == 0 || !isAlpha(cleaned[i-1])) &&
+			(i+5 >= n || !isAlpha(cleaned[i+5])) {
+			depth++
+			cur.WriteString("BEGIN")
+			i += 5
+			continue
+		}
+		if strings.ToUpper(cleaned[i:min(i+3, n)]) == "END" &&
+			(i == 0 || !isAlpha(cleaned[i-1])) &&
+			(i+3 >= n || !isAlpha(cleaned[i+3])) {
+			depth--
+			cur.WriteString("END")
+			i += 3
+			if depth == 0 {
+				if s := strings.TrimSpace(cur.String()); s != "" {
+					stmts = append(stmts, s)
+				}
+				cur.Reset()
+			}
+			continue
+		}
+		if cleaned[i] == ';' && depth == 0 {
+			if s := strings.TrimSpace(cur.String()); s != "" {
+				stmts = append(stmts, s)
+			}
+			cur.Reset()
+			i++
+			continue
+		}
+		cur.WriteByte(cleaned[i])
+		i++
+	}
+	if s := strings.TrimSpace(cur.String()); s != "" {
+		stmts = append(stmts, s)
+	}
+	return stmts
+}
+
+func stripInlineComments(src string) string {
+	var out strings.Builder
+	for _, line := range strings.Split(src, "\n") {
+		if idx := strings.Index(line, "--"); idx >= 0 {
+			line = line[:idx]
+		}
+		out.WriteString(line)
+		out.WriteByte('\n')
+	}
+	return out.String()
+}
+
+func isAlpha(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || b == '_'
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

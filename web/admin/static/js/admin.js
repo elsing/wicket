@@ -1,3 +1,88 @@
+// ── Device inline rename ──────────────────────────────────────────────────────
+document.addEventListener('click', function(e) {
+  // Click on name span → show form, hide span
+  const nameSpan = e.target.closest('[data-rename-device]');
+  if (nameSpan) {
+    const id = nameSpan.dataset.renameDevice;
+    nameSpan.style.display = 'none';
+    const form = document.getElementById('dev-rename-form-' + id);
+    if (form) {
+      form.style.display = 'inline-flex';
+      form.querySelector('input').focus();
+      form.querySelector('input').select();
+    }
+    return;
+  }
+  // Cancel button → hide form, show span
+  const cancelBtn = e.target.closest('[data-cancel-rename]');
+  if (cancelBtn) {
+    const id = cancelBtn.dataset.cancelRename;
+    const form = document.getElementById('dev-rename-form-' + id);
+    const span = document.getElementById('dev-name-' + id);
+    if (form) form.style.display = 'none';
+    if (span) span.style.display = '';
+  }
+});
+
+// Escape key cancels rename
+document.addEventListener('keydown', function(e) {
+  if (e.key !== 'Escape') return;
+  document.querySelectorAll('[id^="dev-rename-form-"]').forEach(form => {
+    if (form.style.display !== 'none') {
+      const id = form.id.replace('dev-rename-form-', '');
+      form.style.display = 'none';
+      const span = document.getElementById('dev-name-' + id);
+      if (span) span.style.display = '';
+    }
+  });
+});
+
+
+// ── Confirmation Modal ────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', function() {
+  const modal = document.createElement('div');
+  modal.id = 'confirm-modal';
+  modal.style.cssText = 'display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.45);align-items:center;justify-content:center';
+  modal.innerHTML = `
+    <div style="background:var(--bg-card,#fff);border-radius:10px;padding:24px 28px;max-width:400px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,.3);border:1px solid var(--border,#e5e7eb)">
+      <p id="confirm-modal-msg" style="margin:0 0 20px;font-size:15px;color:var(--text,#111)"></p>
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <button id="confirm-modal-cancel" class="btn btn-ghost">Cancel</button>
+        <button id="confirm-modal-ok" class="btn" style="background:var(--error-light,#fee2e2);color:var(--error-text,#b91c1c);border:1px solid var(--error-text,#b91c1c)">Confirm</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+
+  let resolveFn = null;
+
+  function showModal(msg) {
+    return new Promise(resolve => {
+      resolveFn = resolve;
+      document.getElementById('confirm-modal-msg').textContent = msg;
+      modal.style.display = 'flex';
+    });
+  }
+
+  function hideModal(result) {
+    modal.style.display = 'none';
+    if (resolveFn) { resolveFn(result); resolveFn = null; }
+  }
+
+  document.getElementById('confirm-modal-cancel').addEventListener('click', () => hideModal(false));
+  document.getElementById('confirm-modal-ok').addEventListener('click', () => hideModal(true));
+  modal.addEventListener('click', e => { if (e.target === modal) hideModal(false); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') hideModal(false); });
+
+  // Intercept htmx confirm events
+  document.body.addEventListener('htmx:confirm', function(e) {
+    if (!e.detail.question) return;
+    e.preventDefault();
+    showModal(e.detail.question).then(ok => {
+      if (ok) e.detail.issueRequest(true);
+    });
+  });
+});
+
 // Wicket admin portal JS
 // Uses window.wicketWS so the connection persists across HTMX partial swaps
 // and script re-executions without "already declared" errors.
@@ -170,6 +255,34 @@ function fmtRate(bps) {
 }
 
 // ── Group edit toggle ─────────────────────────────────────────────────────────
+// Refresh agents list when a new agent is created
+document.body.addEventListener('refreshAgentsList', function() {
+  htmx.ajax('GET', '/agents/list', {target: '#agents-content', swap: 'innerHTML'});
+});
+
+// Reset create group form after successful submission
+document.body.addEventListener('resetGroupForm', function() {
+  const form = document.querySelector('form[hx-post="/groups"]');
+  if (form) {
+    form.reset();
+    const errDiv = document.getElementById('group-form-error');
+    if (errDiv) errDiv.innerHTML = '';
+  }
+});
+
+// Event delegation for data-attribute based toggles (templ-safe approach)
+document.addEventListener('click', function(e) {
+  const groupEl = e.target.closest('[data-toggle-group-edit]');
+  if (groupEl) { window.toggleGroupEdit(groupEl.dataset.toggleGroupEdit); return; }
+  const agentEl = e.target.closest('[data-toggle-agent-edit]');
+  if (agentEl) { window.toggleAgentEdit(agentEl.dataset.toggleAgentEdit); return; }
+});
+
+window.toggleAgentEdit = function(agentID) {
+  const el = document.getElementById('agent-edit-' + agentID);
+  if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+};
+
 window.toggleGroupEdit = function(groupID) {
   const el = document.getElementById('edit-' + groupID);
   if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';

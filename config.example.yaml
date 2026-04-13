@@ -19,7 +19,7 @@ server:
   environment: production   # production | development
 
 db:
-  path: /data/wicket.db
+  dsn: "postgres://wicket:yourpassword@localhost:5432/wicket?sslmode=disable"
 
 wireguard:
   interface: wg1  # change to avoid conflict with existing interfaces

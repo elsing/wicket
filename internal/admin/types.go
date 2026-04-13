@@ -7,11 +7,12 @@ import (
 )
 
 type AdminDashboardData struct {
-	Session        *portal.SessionData
-	PendingDevices []*db.Device
-	ActiveSessions []*db.Session
-	Agents         []*db.Agent
-	WSCounts       map[ws.ClientKind]int
+	Session         *portal.SessionData
+	PendingDevices  []*db.Device
+	ActiveSessions  []*db.Session
+	Agents          []*db.Agent
+	WSCounts        map[ws.ClientKind]int
+	AgentsConnected int // number of agent WebSocket connections
 }
 
 type AdminDevicesData struct {
@@ -20,8 +21,8 @@ type AdminDevicesData struct {
 }
 
 type AdminSessionsData struct {
-	Session        *portal.SessionData
-	Sessions       []*db.Session
+	Session         *portal.SessionData
+	Sessions        []*db.Session
 	ApprovedDevices []*db.Device // approved devices with no active session
 }
 
@@ -34,20 +35,24 @@ type AdminUsersData struct {
 type AdminGroupsData struct {
 	Session      *portal.SessionData
 	Groups       []*db.Group
-	Subnets      []*db.Subnet
-	GroupSubnets map[string][]string // groupID -> []subnetID
-	DeviceCounts map[string]int      // groupID -> device count
+	Routes       []*db.Route
+	Agents       []*db.Agent
+	GroupRoutes  map[string][]string  // groupID -> []routeID
+	GroupAgents  map[string][]string  // groupID -> []agentID
+	AgentsByID   map[string]*db.Agent // agentID -> Agent
+	DeviceCounts map[string]int       // groupID -> device count
 }
 
-type AdminSubnetsData struct {
+type AdminRoutesData struct {
 	Session *portal.SessionData
-	Subnets []*db.Subnet
+	Routes  []*db.Route
 }
 
 type AdminAgentsData struct {
 	Session        *portal.SessionData
 	Agents         []*db.Agent
 	ConnectedCount int
+	PublicURL      string // for the agent install command hint
 }
 
 type AdminAuditData struct {
@@ -56,8 +61,7 @@ type AdminAuditData struct {
 }
 
 type AdminMetricsData struct {
-	Session        *portal.SessionData
-	Devices        []*db.Device
-	LatestMetrics  map[string]*db.MetricSnapshot // deviceID -> latest snapshot
+	Session       *portal.SessionData
+	Devices       []*db.Device
+	LatestMetrics map[string]*db.MetricSnapshot // deviceID -> latest snapshot
 }
-

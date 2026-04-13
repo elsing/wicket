@@ -2,10 +2,15 @@ package portal
 
 import (
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	_ "embed"
+	"errors"
+	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -16,11 +21,15 @@ import (
 
 	qrcode "github.com/skip2/go-qrcode"
 
+	agenthub "github.com/wicket-vpn/wicket/internal/agent"
 	"github.com/wicket-vpn/wicket/internal/config"
 	"github.com/wicket-vpn/wicket/internal/core"
 	"github.com/wicket-vpn/wicket/internal/oidc"
 	"github.com/wicket-vpn/wicket/internal/ws"
 )
+
+//go:embed static/agent/install.sh
+var agentInstallScript []byte
 
 const (
 	oidcStateCookie = "wicket_oidc_state"
@@ -33,6 +42,7 @@ type Handler struct {
 	oidc     *oidc.Provider
 	sessions *SessionManager
 	hub      *ws.Hub
+	agentHub *agenthub.Hub
 	cfg      *config.Config
 	log      *zap.Logger
 }
@@ -42,6 +52,7 @@ func NewHandler(
 	svc *core.Service,
 	oidcProvider *oidc.Provider,
 	hub *ws.Hub,
+	agHub *agenthub.Hub,
 	cfg *config.Config,
 	log *zap.Logger,
 ) http.Handler {
@@ -52,6 +63,7 @@ func NewHandler(
 		oidc:     oidcProvider,
 		sessions: NewSessionManager(cfg.Public.SessionSecret, cfg.Public.SessionDuration, secure),
 		hub:      hub,
+		agentHub: agHub,
 		cfg:      cfg,
 		log:      log,
 	}
@@ -70,6 +82,12 @@ func NewHandler(
 
 	// Public (unauthenticated) routes
 	r.Get("/health", h.handleHealth)
+
+	// Agent download — unauthenticated, rate-limited per IP.
+	// Serves the wicket-agent binary and a ready-to-run install script.
+	r.With(httprate.LimitByIP(10, time.Minute)).Get("/agent/download", h.handleAgentDownload)
+	r.With(httprate.LimitByIP(10, time.Minute)).Get("/agent/install.sh", h.handleAgentInstallScript)
+	r.Get("/agent/connect", h.handleAgentConnect) // token auth via Bearer header
 	r.Get("/auth/login", h.handleLogin)
 	r.Get("/auth/callback", h.handleCallback)
 	r.Post("/auth/logout", h.handleLogout)
@@ -77,7 +95,12 @@ func NewHandler(
 	// Authenticated routes
 	r.Group(func(r chi.Router) {
 		r.Use(h.sessions.Middleware("/auth/login", func(ctx context.Context, userID string) bool {
-			user, err := h.svc.DB().GetUserByID(ctx, userID)
+			dbCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			defer cancel()
+			user, err := h.svc.DB().GetUserByID(dbCtx, userID)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return true // transient DB error — don't log out
+			}
 			return err == nil && user != nil && user.IsActive
 		}))
 
@@ -102,6 +125,103 @@ func NewHandler(
 // ─────────────────────────────────────────────────────────────────────────────
 // Health
 // ─────────────────────────────────────────────────────────────────────────────
+
+// serverError logs an internal error and returns a 500 to the client.
+func (h *Handler) serverError(w http.ResponseWriter, msg string, err error) {
+	h.log.Error("portal: "+msg, zap.Error(err))
+	http.Error(w, msg, http.StatusInternalServerError)
+}
+
+// agentBinaryPath is where wicket-agent lives inside the container.
+const agentBinaryPath = "/usr/local/bin/wicket-agent"
+
+// handleAgentDownload serves the wicket-agent binary directly.
+// Rate-limited to 10 requests/minute per IP.
+func (h *Handler) handleAgentDownload(w http.ResponseWriter, r *http.Request) {
+	f, err := os.Open(agentBinaryPath)
+	if err != nil {
+		h.log.Warn("agent binary not found", zap.String("path", agentBinaryPath), zap.Error(err))
+		http.Error(w, "agent binary not available", http.StatusNotFound)
+		return
+	}
+	defer f.Close()
+
+	stat, err := f.Stat()
+	if err != nil {
+		h.serverError(w, "stat agent binary", err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", `attachment; filename="wicket-agent"`)
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", stat.Size()))
+	w.Header().Set("Cache-Control", "no-store")
+	http.ServeContent(w, r, "wicket-agent", stat.ModTime(), f)
+}
+
+// handleAgentInstallScript serves the install script from the static folder,
+// substituting __WICKET_PUBLIC_URL__ with the actual server URL.
+func (h *Handler) handleAgentInstallScript(w http.ResponseWriter, r *http.Request) {
+	baseURL := h.cfg.Server.ExternalURL
+	if baseURL == "" {
+		scheme := "https"
+		if r.TLS == nil && r.Header.Get("X-Forwarded-Proto") != "https" {
+			scheme = "http"
+		}
+		baseURL = scheme + "://" + r.Host
+	}
+
+	// Substitute the server URL placeholder
+	out := strings.ReplaceAll(string(agentInstallScript), "__WICKET_PUBLIC_URL__", baseURL)
+
+	w.Header().Set("Content-Type", "text/x-shellscript")
+	w.Header().Set("Content-Disposition", `inline; filename="install-agent.sh"`)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Write([]byte(out)) //nolint:errcheck
+}
+
+// handleAgentConnect handles WebSocket connections from remote agents.
+// Agents authenticate with "Authorization: Bearer <token>" — no OIDC needed.
+// Lives on the public portal so agents don't need access to the admin panel.
+func (h *Handler) handleAgentConnect(w http.ResponseWriter, r *http.Request) {
+	token := ""
+	if auth := r.Header.Get("Authorization"); len(auth) > 7 && auth[:7] == "Bearer " {
+		token = auth[7:]
+	}
+	if token == "" {
+		http.Error(w, "missing token", http.StatusUnauthorized)
+		return
+	}
+
+	agentRecord, err := h.svc.VerifyAgentToken(r.Context(), token)
+	if err != nil {
+		http.Error(w, "invalid token", http.StatusUnauthorized)
+		return
+	}
+	if !agentRecord.IsActive {
+		http.Error(w, "agent revoked", http.StatusForbidden)
+		return
+	}
+
+	if h.agentHub == nil {
+		http.Error(w, "agent hub not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	syncPayload, err := agenthub.BuildSyncPayload(
+		r.Context(),
+		h.svc.DB(),
+		agentRecord.ID,
+		agentRecord.VPNPool,
+		"",
+		h.svc.Config().WireGuard.ListenPort,
+	)
+	if err != nil {
+		h.log.Warn("building agent sync payload", zap.Error(err))
+	}
+
+	h.agentHub.HandleConnect(w, r, agentRecord.ID, syncPayload)
+}
 
 func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
 	status := h.svc.Health(time.Time{})
@@ -137,7 +257,8 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	})
 
 	// Preserve the next= redirect destination through the OIDC round-trip via a cookie.
-	if next := r.URL.Query().Get("next"); next != "" {
+	// Only accept relative paths (must start with "/" but not "//") to prevent open redirects.
+	if next := r.URL.Query().Get("next"); next != "" && strings.HasPrefix(next, "/") && !strings.HasPrefix(next, "//") {
 		http.SetCookie(w, &http.Cookie{
 			Name:     "wicket_next",
 			Value:    next,
@@ -251,7 +372,7 @@ func (h *Handler) handleNewDevice(w http.ResponseWriter, r *http.Request) {
 
 	groups, err := h.svc.ListGroupsForUser(r.Context(), session.UserID)
 	if err != nil {
-		http.Error(w, "error loading groups", http.StatusInternalServerError)
+		h.serverError(w, "error loading groups", err)
 		return
 	}
 
@@ -278,7 +399,7 @@ func (h *Handler) handleCreateDevice(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.log.Warn("creating device", zap.Error(err))
 		groups, _ := h.svc.ListGroupsForUser(r.Context(), session.UserID)
-		renderNewDeviceError(w, r, session, err.Error(), groups)
+		renderNewDeviceError(w, r, session, "Failed to create device. Please try again.", groups)
 		return
 	}
 
@@ -300,14 +421,15 @@ func (h *Handler) handleSetAutoRenew(w http.ResponseWriter, r *http.Request) {
 
 	autoRenew := r.FormValue("auto_renew") == "true"
 	if err := h.svc.SetDeviceAutoRenew(r.Context(), deviceID, session.UserID, autoRenew); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		h.log.Warn("setting device auto-renew", zap.Error(err))
+		http.Error(w, "failed to update device", http.StatusBadRequest)
 		return
 	}
 
 	// Return updated device card for HTMX swap.
 	devices, err := h.svc.GetDevicesForUser(r.Context(), session.UserID)
 	if err != nil {
-		http.Error(w, "error loading device", http.StatusInternalServerError)
+		h.serverError(w, "error loading device", err)
 		return
 	}
 	for _, d := range devices {
@@ -378,13 +500,13 @@ func (h *Handler) handleActivateSession(w http.ResponseWriter, r *http.Request) 
 	vpnSession, err := h.svc.ActivateSession(r.Context(), deviceID, session.UserID, clientIP(r))
 	if err != nil {
 		h.log.Warn("activating session", zap.Error(err))
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, "failed to activate session", http.StatusBadRequest)
 		return
 	}
 
 	devices, err := h.svc.GetDevicesForUser(r.Context(), session.UserID)
 	if err != nil {
-		http.Error(w, "error loading device", http.StatusInternalServerError)
+		h.serverError(w, "error loading device", err)
 		return
 	}
 	for _, d := range devices {
@@ -447,7 +569,7 @@ func (h *Handler) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.svc.RevokeSession(r.Context(), sessionID, userSession.UserID, clientIP(r), false); err != nil {
 		h.log.Warn("revoking session", zap.Error(err))
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, "failed to revoke session", http.StatusBadRequest)
 		return
 	}
 
@@ -499,5 +621,3 @@ func clientIP(r *http.Request) string {
 	}
 	return host
 }
-
-

@@ -14,17 +14,17 @@ import (
 
 // Config is the root configuration structure.
 type Config struct {
-	Server    ServerConfig    `yaml:"server"`
-	DB        DBConfig        `yaml:"db"`
+	Server   ServerConfig   `yaml:"server"`
+	DB       DBConfig       `yaml:"db"`
 	WireGuard WireGuardConfig `yaml:"wireguard"`
-	OIDC      OIDCConfig      `yaml:"oidc"`
-	Public    PublicConfig    `yaml:"public"`
-	Admin     AdminConfig     `yaml:"admin"`
-	SMTP      SMTPConfig      `yaml:"smtp"`
-	Security  SecurityConfig  `yaml:"security"`
-	Agent     AgentConfig     `yaml:"agent"`
-	Metrics   MetricsConfig   `yaml:"metrics"`
-	Logging   LoggingConfig   `yaml:"logging"`
+	OIDC     OIDCConfig     `yaml:"oidc"`
+	Public   PublicConfig   `yaml:"public"`
+	Admin    AdminConfig    `yaml:"admin"`
+	SMTP     SMTPConfig     `yaml:"smtp"`
+	Security SecurityConfig `yaml:"security"`
+	Agent    AgentConfig    `yaml:"agent"`
+	Metrics  MetricsConfig  `yaml:"metrics"`
+	Logging  LoggingConfig  `yaml:"logging"`
 }
 
 // ServerConfig holds general server settings.
@@ -38,10 +38,11 @@ type ServerConfig struct {
 	Environment string `yaml:"environment"`
 }
 
-// DBConfig holds database settings.
+// DBConfig holds database connection settings.
 type DBConfig struct {
-	// Path is the file path for the SQLite database, e.g. /data/wicket.db
-	Path string `yaml:"path"`
+	// DSN is the PostgreSQL connection string.
+	// e.g. postgres://wicket:pass@localhost:5432/wicket?sslmode=disable
+	DSN string `yaml:"dsn"`
 }
 
 // WireGuardConfig holds WireGuard interface settings for the local peer manager.
@@ -130,7 +131,7 @@ type SecurityConfig struct {
 	AllowPortalSessionExtension bool `yaml:"allow_portal_session_extension"`
 
 	// MaxLoginAttempts before temporarily blocking an IP.
-	MaxLoginAttempts   int           `yaml:"max_login_attempts"`
+	MaxLoginAttempts int           `yaml:"max_login_attempts"`
 	LoginBlockDuration time.Duration `yaml:"login_block_duration"`
 }
 
@@ -263,7 +264,7 @@ func defaults() *Config {
 			Environment: "production",
 		},
 		DB: DBConfig{
-			Path: "/data/wicket.db",
+			DSN: "postgres://wicket:wicket@localhost:5432/wicket?sslmode=require",
 		},
 		WireGuard: WireGuardConfig{
 			Interface:  "wg1", // default to wg1 to avoid conflict with existing wg0

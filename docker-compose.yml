@@ -37,9 +37,25 @@ services:
 
     healthcheck:
       test: ["CMD", "wicket", "health", "--socket", "/var/run/wicket/core.sock"]
-      interval: 30s
+      interval: 120s
       timeout: 5s
       retries: 3
       start_period: 15
   
     network_mode: host
+
+  wicket-db:
+    image: postgres:16-alpine
+    container_name: wicket-db
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: wicket
+      POSTGRES_USER: wicket
+      POSTGRES_PASSWORD: yourpassword
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:

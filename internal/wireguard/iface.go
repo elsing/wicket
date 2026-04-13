@@ -95,12 +95,11 @@ func getIfaceAddr(iface string) string {
 }
 
 // ensureIPTables sets up forwarding rules for the WireGuard interface.
-// We do NOT add NAT/masquerade — the server acts as a pure IP router.
-// Your upstream router/firewall needs a static route:
-//   <vpn-subnet> via <this-server-ip>
-// That way VPN clients appear with their real VPN IPs to the rest of the network.
-func ensureIPTables(iface, vpnNet string, log *zap.Logger) {
-	// Only need FORWARD rules — no masquerade
+// For routed groups: pure IP forwarding, no NAT. Upstream needs a static route.
+// For masqueraded groups: MASQUERADE added so device IPs are hidden behind the
+// agent server's outbound IP, enabling HA/load-balancing without static routes.
+func ensureIPTables(iface string, _ string, log *zap.Logger) {
+	// Always add FORWARD rules
 	fwdRules := [][]string{
 		{"iptables", "-C", "FORWARD", "-i", iface, "-j", "ACCEPT"},
 		{"iptables", "-C", "FORWARD", "-o", iface, "-j", "ACCEPT"},
@@ -116,10 +115,9 @@ func ensureIPTables(iface, vpnNet string, log *zap.Logger) {
 			}
 		}
 	}
-	log.Info("routing mode: pure IP router (no NAT) — ensure upstream has static route",
-		zap.String("vpn_subnet", vpnNet),
-	)
+	log.Info("WireGuard forwarding rules in place", zap.String("iface", iface))
 }
+
 
 func run(args ...string) error {
 	cmd := exec.Command(args[0], args[1:]...)

@@ -95,8 +95,8 @@ func runServe(_ *cobra.Command, _ []string) error {
 	_ = notifier // wired into service handlers as needed
 
 	// ── Portal handlers ───────────────────────────────────────────────────────
-	publicHandler := portal.NewHandler(srv.Service(), publicOIDC, hub, cfg, log)
-	adminHandler := admin.NewHandler(srv.Service(), adminOIDC, hub, cfg, log)
+	publicHandler := portal.NewHandler(srv.Service(), publicOIDC, hub, srv.AgentHub(), cfg, log)
+	adminHandler := admin.NewHandler(srv.Service(), adminOIDC, hub, srv.AgentHub(), cfg, log)
 
 	srv.SetPublicHandler(publicHandler)
 	srv.SetAdminHandler(adminHandler)

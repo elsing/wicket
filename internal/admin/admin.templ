@@ -33,7 +33,7 @@ templ AdminLayout(title string, session *portal.SessionData, activeNav string) {
 				@navItem("/sessions", "sessions", activeNav, "Sessions")
 				@navItem("/users", "users", activeNav, "Users")
 				@navItem("/groups", "groups", activeNav, "Groups")
-				@navItem("/subnets", "subnets", activeNav, "Subnets")
+				@navItem("/routes", "routes", activeNav, "Routes")
 				@navItem("/agents", "agents", activeNav, "Agents")
 				@navItem("/metrics", "metrics", activeNav, "Metrics")
 				@navItem("/audit", "audit", activeNav, "Audit Log")
@@ -107,7 +107,7 @@ templ DashboardContent(data AdminDashboardData) {
 		</a>
 		<a href="/agents" class="stat-card card" style="text-decoration:none;cursor:pointer">
 			<div class="stat-label">Connected Agents</div>
-			<div class="stat-value">{ itoa(data.WSCounts[ws.KindAgent]) }</div>
+			<div class="stat-value">{ itoa(data.AgentsConnected) }</div>
 		</a>
 		<a href="/audit" class="stat-card card" style="text-decoration:none;cursor:pointer">
 			<div class="stat-label">Users Online</div>
@@ -131,14 +131,14 @@ templ DashboardContent(data AdminDashboardData) {
 		</div>
 	</section>
 
-		<section class="dashboard-section">
-			<h2>Active Sessions</h2>
+	<section class="dashboard-section">
+		<h2>Active Sessions</h2>
 			<div class="table-wrap card">
-				<table class="table">
-					<thead><tr><th>Device</th><th>User</th><th>IP</th><th>Expires</th><th>Actions</th></tr></thead>
-					<tbody>
-						for _, s := range data.ActiveSessions {
-							<tr id={ "session-" + s.ID }>
+			<table class="table">
+				<thead><tr><th>Device</th><th>User</th><th>IP</th><th>Expires</th><th>Actions</th></tr></thead>
+				<tbody>
+					for _, s := range data.ActiveSessions {
+						<tr id={ "session-" + s.ID }>
 								<td>
 									if s.DeviceName != "" {
 										{ s.DeviceName }
@@ -175,8 +175,8 @@ templ DashboardContent(data AdminDashboardData) {
 					</tbody>
 				</table>
 			</div>
-		</section>
-	}
+	</section>
+}
 
 templ PendingDevicesTable(devices []*db.Device) {
 	<div class="table-wrap card">
@@ -222,17 +222,17 @@ templ PendingDevicesTable(devices []*db.Device) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Subnets
+// Routes
 // ─────────────────────────────────────────────────────────────────────────────
 
-templ AdminSubnetsPage(data AdminSubnetsData) {
-	@AdminLayout("Subnets", data.Session, "subnets") {
+templ AdminRoutesPage(data AdminRoutesData) {
+	@AdminLayout("Routes", data.Session, "routes") {
 		<div class="two-col">
 			<div class="table-wrap card">
 				<table class="table">
 					<thead><tr><th>Name</th><th>CIDR</th><th>Description</th><th></th></tr></thead>
-					<tbody id="subnet-list">
-						for _, s := range data.Subnets {
+					<tbody id="route-list">
+						for _, s := range data.Routes {
 							<tr>
 								<td class="font-medium">{ s.Name }</td>
 								<td><code>{ s.CIDR }</code></td>
@@ -240,7 +240,7 @@ templ AdminSubnetsPage(data AdminSubnetsData) {
 								<td>
 									<button
 										class="btn btn-sm btn-ghost"
-										hx-delete={ "/subnets/" + s.ID }
+										hx-delete={ "/routes/" + s.ID }
 										hx-target="closest tr"
 										hx-swap="delete"
 										hx-confirm={ "Delete \"" + s.Name + "\"?" }
@@ -252,8 +252,9 @@ templ AdminSubnetsPage(data AdminSubnetsData) {
 				</table>
 			</div>
 			<div class="card form-panel">
-				<h3>Add Subnet</h3>
-				<form hx-post="/subnets" hx-target="#subnet-list" hx-swap="innerHTML" class="form">
+				<h3>Add Route</h3>
+				<div id="route-form-error"></div>
+				<form hx-post="/routes" hx-target="#route-list" hx-swap="innerHTML" class="form">
 					<div class="form-field">
 						<label>Name</label>
 						<input type="text" name="name" class="input" placeholder="office-lan" required/>
@@ -266,16 +267,16 @@ templ AdminSubnetsPage(data AdminSubnetsData) {
 						<label>Description</label>
 						<input type="text" name="description" class="input" placeholder="Office LAN"/>
 					</div>
-					<button type="submit" class="btn btn-primary">Add Subnet</button>
+					<button type="submit" class="btn btn-primary">Add Route</button>
 				</form>
 			</div>
 		</div>
 	}
 }
 
-// SubnetRows renders just the subnet table rows for HTMX swaps.
-templ SubnetRows(data AdminSubnetsData) {
-	for _, s := range data.Subnets {
+// RouteRows renders just the route table rows for HTMX swaps.
+templ RouteRows(data AdminRoutesData) {
+	for _, s := range data.Routes {
 		<tr>
 			<td class="font-medium">{ s.Name }</td>
 			<td><code>{ s.CIDR }</code></td>
@@ -283,7 +284,7 @@ templ SubnetRows(data AdminSubnetsData) {
 			<td>
 				<button
 					class="btn btn-sm btn-ghost"
-					hx-delete={ "/subnets/" + s.ID }
+					hx-delete={ "/routes/" + s.ID }
 					hx-target="closest tr"
 					hx-swap="delete"
 					hx-confirm={ "Delete \"" + s.Name + "\"?" }>Delete</button>
@@ -380,7 +381,22 @@ templ DeviceTableBody(devices []*db.Device) {
 // DeviceRow renders a single device table row for HTMX outerHTML swaps.
 templ DeviceRow(dev *db.Device) {
 	<tr id={ "dev-" + dev.ID }>
-		<td class="font-medium">{ dev.Name }</td>
+		<td class="font-medium">
+			<span id={ "dev-name-" + dev.ID }
+				style="cursor:pointer;border-bottom:1px dashed var(--border)"
+				title="Click to rename"
+				data-rename-device={ dev.ID }>{ dev.Name }</span>
+			<form id={ "dev-rename-form-" + dev.ID }
+				style="display:none"
+				hx-put={ "/devices/" + dev.ID + "/name" }
+				hx-target={ "#dev-" + dev.ID } hx-swap="outerHTML">
+				<input type="text" name="name" class="input" style="width:140px;padding:2px 6px;font-size:13px"
+					value={ dev.Name } autofocus/>
+				<button type="submit" class="btn btn-sm btn-primary" style="padding:2px 8px">✓</button>
+				<button type="button" class="btn btn-sm btn-ghost" style="padding:2px 6px"
+					data-cancel-rename={ dev.ID }>✕</button>
+			</form>
+		</td>
 		<td class="text-muted">
 			if dev.User != nil && dev.User.Email != "" {
 				{ dev.User.Email }
@@ -600,6 +616,7 @@ templ AdminGroupsPage(data AdminGroupsData) {
 			</div>
 			<div class="card form-panel">
 				<h3>Create Group</h3>
+				<div id="group-form-error"></div>
 				<form hx-post="/groups" hx-target="#groups-list" hx-swap="innerHTML" class="form">
 					<div class="form-field">
 						<label>Name</label>
@@ -633,9 +650,9 @@ templ AdminGroupsPage(data AdminGroupsData) {
 }
 
 // GroupCard renders a single group card for HTMX outerHTML swaps.
-templ GroupCard(g *db.Group, subnets []*db.Subnet, groupSubnets map[string][]string, deviceCount int) {
+templ GroupCard(g *db.Group, routes []*db.Route, groupRoutes map[string][]string, deviceCount int, groupData AdminGroupsData) {
 	<div class="card" id={ "group-" + g.ID } style="padding:20px 24px">
-		<div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:14px;gap:16px">
+		<div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px;gap:16px">
 			<div style="flex:1;min-width:0">
 				<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
 					<span style="font-weight:600;font-size:15px">{ g.Name }</span>
@@ -663,16 +680,48 @@ templ GroupCard(g *db.Group, subnets []*db.Subnet, groupSubnets map[string][]str
 						<span>↻ unlimited ext</span>
 					}
 				</div>
-			</div>
+				<div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;margin-top:12px">Agent</div>
+				if len(groupData.GroupAgents[g.ID]) > 0 {
+					for _, agentID := range groupData.GroupAgents[g.ID] {
+						if agent, ok := groupData.AgentsByID[agentID]; ok {
+							<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+								<span class="badge badge-success" style="font-size:11px">{ agent.Name }</span>
+								if agent.VPNPool != "" {
+									<span style="font-size:11px;color:var(--text-2)">{ agent.VPNPool }</span>
+								}
+								<button class="btn btn-sm btn-ghost" style="color:var(--error-text);padding:0 6px;font-size:13px"
+									hx-delete={ "/groups/" + g.ID + "/agents/" + agentID }
+									hx-target={ "#group-" + g.ID } hx-swap="outerHTML">×</button>
+							</div>
+						}
+					}
+				} else {
+					<div style="font-size:12px;color:var(--text-2);margin-bottom:6px">None — uses server directly</div>
+				}
+				if len(groupData.Agents) > 0 {
+					<select class="input" style="font-size:12px;padding:4px 8px;max-width:220px;margin-top:4px"
+						name="agent_id"
+						hx-post={ "/groups/" + g.ID + "/agents" }
+						hx-target={ "#group-" + g.ID } hx-swap="outerHTML"
+						hx-include="this"
+						hx-trigger="change">
+						<option value="">Assign agent…</option>
+						for _, a := range groupData.Agents {
+							if a.IsActive && !agentAssigned(a.ID, groupData.GroupAgents[g.ID]) {
+								<option value={ a.ID }>{ a.Name }{ agentOptionLabel(a) }</option>
+							}
+						}
+					</select>
+				}
 			<div style="display:flex;gap:8px;flex-shrink:0">
 				<button class="btn btn-sm btn-outline"
-					data-group-id={ g.ID } onclick="toggleGroupEdit(this.dataset.groupId)">
+					data-toggle-group-edit={ g.ID }>
 					Edit
 				</button>
 				<button class="btn btn-sm btn-ghost" style="color:var(--error-text)"
 					hx-delete={ "/groups/" + g.ID }
 					hx-target={ "#group-" + g.ID } hx-swap="delete"
-					hx-confirm={ "Delete group \"" + g.Name + "\"? Devices must be reassigned first." }>
+					hx-confirm="Delete this group? Devices must be reassigned first.">
 					Delete
 				</button>
 			</div>
@@ -681,7 +730,7 @@ templ GroupCard(g *db.Group, subnets []*db.Subnet, groupSubnets map[string][]str
 		<div id={ "edit-" + g.ID } style="display:none;background:var(--bg-2);border-radius:8px;padding:14px;margin-bottom:14px">
 			<form hx-put={ "/groups/" + g.ID }
 				hx-target={ "#group-" + g.ID } hx-swap="outerHTML"
-				style="display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end">
+				style="display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:end">
 				<div>
 					<label style="font-size:12px;font-weight:500;color:var(--text-2);display:block;margin-bottom:4px">Name</label>
 					<input type="text" name="name" class="input" value={ g.Name } required/>
@@ -697,30 +746,48 @@ templ GroupCard(g *db.Group, subnets []*db.Subnet, groupSubnets map[string][]str
 				<div>
 					<label style="font-size:12px;font-weight:500;color:var(--text-2);display:block;margin-bottom:4px">Max Extensions</label>
 					if g.MaxExtensions.Valid {
-						<input type="number" name="max_extensions" class="input" value={ itoa(int(g.MaxExtensions.Int64)) } min="0" style="width:100px"/>
+						<input type="number" name="max_extensions" class="input" value={ itoa(int(g.MaxExtensions.Int64)) } min="0"/>
 					} else {
-						<input type="number" name="max_extensions" class="input" placeholder="∞" min="0" style="width:100px"/>
+						<input type="number" name="max_extensions" class="input" placeholder="∞" min="0"/>
 					}
+				</div>
+				<div>
+					<label style="font-size:12px;font-weight:500;color:var(--text-2);display:block;margin-bottom:4px">Endpoint Override</label>
+					<input type="text" name="endpoint_override" class="input" value={ g.EndpointOverride } placeholder="optional"/>
+				</div>
+				<div>
+					<label style="font-size:12px;font-weight:500;color:var(--text-2);display:block;margin-bottom:4px">DNS Servers</label>
+					<input type="text" name="dns" class="input" value={ g.DNS } placeholder="1.1.1.1, 8.8.8.8 (blank = global default)"/>
+				</div>
+				<div style="grid-column:1/-1;display:flex;align-items:center;gap:16px">
+					<label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+						if g.IsPublic {
+							<input type="checkbox" name="is_public" value="true" class="toggle" checked/>
+						} else {
+							<input type="checkbox" name="is_public" value="true" class="toggle"/>
+						}
+						<span>Public (any user can select this group)</span>
+					</label>
 				</div>
 				<div style="grid-column:1/-1;display:flex;gap:8px">
 					<button type="submit" class="btn btn-sm btn-primary">Save</button>
-					<button type="button" class="btn btn-sm btn-ghost" data-group-id={ g.ID } onclick="toggleGroupEdit(this.dataset.groupId)">Cancel</button>
+					<button type="button" class="btn btn-sm btn-ghost" data-toggle-group-edit={ g.ID }>Cancel</button>
 				</div>
 			</form>
 		</div>
 
-		<div>
-			<div style="font-size:12px;font-weight:500;color:var(--text-2);margin-bottom:8px">SUBNETS</div>
+		<div style="margin-top:14px">
+			<div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Routes</div>
 			<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">
-				for _, s := range subnets {
-					if groupHasSubnet(g.ID, s.ID, groupSubnets) {
+				for _, s := range routes {
+					if groupHasRoute(g.ID, s.ID, groupRoutes) {
 						<span class="badge badge-success" style="gap:8px">
 							{ s.Name } ({ s.CIDR })
 							<button
 								style="background:none;border:none;cursor:pointer;color:inherit;padding:0;font-size:14px;line-height:1"
-								hx-delete={ "/groups/" + g.ID + "/subnets/" + s.ID }
+								hx-delete={ "/groups/" + g.ID + "/routes/" + s.ID }
 								hx-target={ "#group-" + g.ID } hx-swap="outerHTML"
-								title="Remove subnet">×</button>
+								title="Remove route">×</button>
 						</span>
 					}
 				}
@@ -728,26 +795,27 @@ templ GroupCard(g *db.Group, subnets []*db.Subnet, groupSubnets map[string][]str
 			<select
 				class="input"
 				style="font-size:12px;padding:5px 10px;max-width:280px"
-				hx-post={ "/groups/" + g.ID + "/subnets" }
+				hx-post={ "/groups/" + g.ID + "/routes" }
 				hx-target={ "#group-" + g.ID } hx-swap="outerHTML"
 				hx-include="this"
-				name="subnet_id"
+				name="route_id"
 				hx-trigger="change">
-				<option value="">Add subnet…</option>
-				for _, s := range subnets {
-					if !groupHasSubnet(g.ID, s.ID, groupSubnets) {
+				<option value="">Add route…</option>
+				for _, s := range routes {
+					if !groupHasRoute(g.ID, s.ID, groupRoutes) {
 						<option value={ s.ID }>{ s.Name } ({ s.CIDR })</option>
 					}
 				}
 			</select>
 		</div>
 	</div>
+</div>
 }
 
 // GroupsList renders just the groups list for HTMX innerHTML swaps.
 templ GroupsList(data AdminGroupsData) {
 	for _, g := range data.Groups {
-		@GroupCard(g, data.Subnets, data.GroupSubnets, data.DeviceCounts[g.ID])
+		@GroupCard(g, data.Routes, data.GroupRoutes, data.DeviceCounts[g.ID], data)
 	}
 }
 
@@ -758,63 +826,157 @@ templ GroupsList(data AdminGroupsData) {
 templ AdminAgentsPage(data AdminAgentsData) {
 	@AdminLayout("Agents", data.Session, "agents") {
 		<div class="page-header">
-			<p class="page-desc">Remote WireGuard agents. Each agent manages its own WireGuard interface and receives peer updates from the core.</p>
+			<p class="page-desc">Remote WireGuard agents. Each agent manages a WireGuard interface on a remote server and receives peer updates from Wicket.</p>
 		</div>
-		<div class="two-col">
-			<div class="table-wrap card">
-				<table class="table">
-					<thead>
-						<tr><th>Name</th><th>Status</th><th>Last Seen</th><th>Actions</th></tr>
-					</thead>
-					<tbody>
-						for _, a := range data.Agents {
-							<tr>
-								<td class="font-medium">{ a.Name }</td>
-								<td>
-									if a.IsActive {
-										<span class="badge badge-success">Active</span>
-									} else {
-										<span class="badge badge-muted">Revoked</span>
-									}
-								</td>
-								<td class="text-muted">
-									if a.LastSeenAt.Valid {
-										{ a.LastSeenAt.Time.Format("02 Jan 15:04") }
-									} else {
-										Never connected
-									}
-								</td>
-								<td>
-									if a.IsActive {
-										<button class="btn btn-sm btn-ghost"
-											hx-delete={ "/agents/" + a.ID }
-											hx-target="closest tr" hx-swap="delete"
-											hx-confirm={ "Revoke agent \"" + a.Name + "\"?" }>Revoke</button>
-									}
-								</td>
-							</tr>
-						}
-					</tbody>
-				</table>
-			</div>
-			<div class="card form-panel">
-				<h3>Register Agent</h3>
-				<p class="form-hint" style="margin-bottom:14px">The token is shown once after creation. Store it securely.</p>
-				<form hx-post="/agents" hx-target="#agent-token-result" hx-swap="innerHTML" class="form">
-					<div class="form-field">
-						<label>Name</label>
-						<input type="text" name="name" class="input" placeholder="agent-lon-01" required/>
-					</div>
-					<div class="form-field">
-						<label>Description</label>
-						<input type="text" name="description" class="input" placeholder="London datacenter"/>
-					</div>
-					<button type="submit" class="btn btn-primary">Register Agent</button>
-				</form>
-				<div id="agent-token-result" style="margin-top:16px"></div>
-			</div>
+		<div id="agent-token-result" style="margin-bottom:12px"></div>
+		<div id="agents-content" hx-get="/agents/list" hx-trigger="refresh from:body" hx-swap="innerHTML">
+			@AgentsList(data)
 		</div>
 	}
+}
+
+// AgentCard renders a single agent card for HTMX outerHTML swaps.
+templ AgentCard(a *db.Agent, data AdminAgentsData) {
+		<div class="card" id={ "agent-" + a.ID } style="padding:20px 24px;margin-bottom:12px">
+			<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:10px">
+				<div style="flex:1">
+					<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+						<span style="font-weight:600;font-size:15px">{ a.Name }</span>
+						if a.Connected {
+							<span class="badge badge-success">● Connected</span>
+						} else if a.IsActive {
+							<span class="badge badge-warning">Registered</span>
+						} else {
+							<span class="badge badge-muted">Revoked</span>
+						}
+					</div>
+					if a.Description != "" {
+						<div style="font-size:12px;color:var(--text-2);margin-top:3px">{ a.Description }</div>
+					}
+					<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--text-2);margin-top:6px">
+						if a.VPNPool != "" {
+							<span>🏊 { a.VPNPool }</span>
+						} else {
+							<span style="color:var(--warning-text)">⚠ No VPN pool set</span>
+						}
+						if a.Endpoint != "" {
+							<span>📡 { a.Endpoint }</span>
+						} else {
+							<span style="color:var(--warning-text)">⚠ No endpoint set</span>
+						}
+						if a.WGPublicKey != "" {
+							<span title={ a.WGPublicKey }>🔑 { a.WGPublicKey[:8] }…</span>
+						} else {
+							<span style="color:var(--warning-text)">⚠ No WG key (agent not yet connected)</span>
+						}
+						if a.LastSeenAt.Valid {
+							<span>Last seen { a.LastSeenAt.Time.Format("02 Jan 15:04") }</span>
+						} else {
+							<span>Never connected</span>
+						}
+					</div>
+				</div>
+				<div style="display:flex;gap:8px;flex-shrink:0">
+					if a.IsActive {
+						<button class="btn btn-sm btn-outline"
+							data-toggle-agent-edit={ a.ID }>
+							Edit
+						</button>
+						<button class="btn btn-sm btn-ghost" style="color:var(--error-text)"
+							hx-delete={ "/agents/" + a.ID }
+							hx-target={ "#agent-" + a.ID } hx-swap="outerHTML"
+							hx-confirm="Revoke this agent? This will disconnect any devices using it.">
+							Revoke
+						</button>
+					} else {
+						<button class="btn btn-sm btn-ghost" style="color:var(--error-text)"
+							hx-delete={ "/agents/" + a.ID + "/delete" }
+							hx-target={ "#agent-" + a.ID } hx-swap="delete"
+							hx-confirm="Permanently delete this agent?">
+							Delete
+						</button>
+					}
+				</div>
+			</div>
+			<div id={ "agent-edit-" + a.ID } style="display:none;background:var(--bg-2);border-radius:8px;padding:14px;margin-top:10px">
+				<form hx-put={ "/agents/" + a.ID }
+					hx-target={ "#agent-" + a.ID } hx-swap="outerHTML"
+					style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+					<div>
+						<label style="font-size:12px;font-weight:500;color:var(--text-2);display:block;margin-bottom:4px">Name</label>
+						<input type="text" name="name" class="input" value={ a.Name } required/>
+					</div>
+					<div>
+						<label style="font-size:12px;font-weight:500;color:var(--text-2);display:block;margin-bottom:4px">Description</label>
+						<input type="text" name="description" class="input" value={ a.Description }/>
+					</div>
+					<div>
+						<label style="font-size:12px;font-weight:500;color:var(--text-2);display:block;margin-bottom:4px">VPN Pool (CIDR)</label>
+						<input type="text" name="vpn_pool" class="input" value={ a.VPNPool } placeholder="10.1.0.0/24"/>
+					</div>
+					<div>
+						<label style="font-size:12px;font-weight:500;color:var(--text-2);display:block;margin-bottom:4px">Endpoint (host:port)</label>
+						<input type="text" name="endpoint" class="input" value={ a.Endpoint } placeholder="lon.vpn.example.com:51820"/>
+					</div>
+					<div style="grid-column:1/-1;display:flex;gap:8px">
+						<button type="submit" class="btn btn-sm btn-primary">Save</button>
+						<button type="button" class="btn btn-sm btn-ghost"
+							data-toggle-agent-edit={ a.ID }>Cancel</button>
+					</div>
+				</form>
+			</div>
+		</div>
+}
+
+templ AgentsList(data AdminAgentsData) {
+	<div class="two-col">
+		<div>
+			for _, a := range data.Agents {
+				@AgentCard(a, data)
+			}
+			if len(data.Agents) == 0 {
+				<div class="card" style="padding:24px;text-align:center;color:var(--text-2)">
+					No agents registered yet. Register your first agent using the form →
+				</div>
+			}
+		</div>
+		<div class="card form-panel">
+			<h3>Register Agent</h3>
+			<p class="form-hint" style="margin-bottom:10px">The token is shown once. Store it securely.</p>
+			<div style="background:var(--bg-2,#f3f4f6);border-radius:6px;padding:10px 12px;margin-bottom:14px;font-size:12px">
+				<div style="color:var(--text-2);margin-bottom:4px;font-weight:500">Install on a remote server (run directly, not piped):</div>
+				<code style="word-break:break-all;color:var(--primary)">
+					curl -fsSL { data.PublicURL }/agent/install.sh -o install-agent.sh &amp;&amp; sudo bash install-agent.sh
+				</code>
+			</div>
+			<div id="agent-form-error" style="margin-bottom:8px"></div>
+			<form hx-post="/agents"
+				hx-target="#agent-token-result"
+				hx-swap="innerHTML"
+				hx-on--after-request="if(event.detail.successful){ htmx.ajax('GET','/agents/list',{target:'#agents-content',swap:'innerHTML'}); this.reset(); document.getElementById('agent-form-error').innerHTML=''; }"
+				class="form">
+				<div class="form-field">
+					<label>Name</label>
+					<input type="text" name="name" class="input" placeholder="agent-lon-01" required/>
+				</div>
+				<div class="form-field">
+					<label>Description</label>
+					<input type="text" name="description" class="input" placeholder="London datacenter"/>
+				</div>
+				<div class="form-field">
+					<label>VPN Pool (CIDR)</label>
+					<input type="text" name="vpn_pool" class="input" placeholder="10.1.0.0/24"/>
+					<p class="form-hint">IP range this agent allocates from. Must not overlap other agents.</p>
+				</div>
+				<div class="form-field">
+					<label>Endpoint (host:port)</label>
+					<input type="text" name="endpoint" class="input" placeholder="lon.vpn.example.com:51820"/>
+					<p class="form-hint">WireGuard endpoint clients will connect to.</p>
+				</div>
+				<button type="submit" class="btn btn-primary">Register Agent</button>
+			</form>
+		</div>
+	</div>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -857,8 +1019,7 @@ templ MetricsTable(data AdminMetricsData) {
 									}
 								</td>
 								<td><code>{ dev.AssignedIP }</code></td>
-								{{ snap := data.LatestMetrics[dev.ID] }}
-								if snap != nil {
+								if snap := data.LatestMetrics[dev.ID]; snap != nil {
 									<td class="text-muted">{ formatBytes(snap.BytesSent) }</td>
 									<td class="text-muted">{ formatBytes(snap.BytesReceived) }</td>
 									<td class="text-muted">

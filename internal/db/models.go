@@ -14,49 +14,52 @@ import (
 // Group defines a session policy and a default set of subnets.
 // Users and devices inherit the group's settings.
 type Group struct {
-	ID              string        `db:"id"`
-	Name            string        `db:"name"`
-	Description     string        `db:"description"`
-	SessionDuration time.Duration `db:"session_duration"` // stored as seconds in DB
-	MaxExtensions   sql.NullInt64 `db:"max_extensions"`   // NULL = unlimited
-	IsPublic        bool          `db:"is_public"`        // any user can select this group
-	CreatedAt       time.Time     `db:"created_at"`
-	UpdatedAt       time.Time     `db:"updated_at"`
+	ID               string        `db:"id"`
+	Name             string        `db:"name"`
+	Description      string        `db:"description"`
+	SessionDuration  time.Duration `db:"session_duration"`
+	MaxExtensions    sql.NullInt64 `db:"max_extensions"`
+	IsPublic         bool          `db:"is_public"`
+	EndpointOverride string        `db:"endpoint_override"`
+	DNS              string        `db:"dns"`
+	CreatedAt        time.Time     `db:"created_at"`
+	UpdatedAt        time.Time     `db:"updated_at"`
 
-	// Populated by joins, not stored in this table.
-	Subnets []Subnet `db:"-"`
+	// Populated by joins.
+	Routes []Route `db:"-"`
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Subnets
+// Routes
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Subnet is a named CIDR block available for routing.
+// Route is a named CIDR block available for routing (formerly Subnet).
 // Designed to integrate cleanly with OSPF mesh routing.
-type Subnet struct {
+type Route struct {
 	ID          string    `db:"id"`
 	Name        string    `db:"name"`
 	CIDR        string    `db:"cidr"`
 	Description string    `db:"description"`
+	IsExcluded  bool      `db:"is_excluded"`
 	CreatedAt   time.Time `db:"created_at"`
 	UpdatedAt   time.Time `db:"updated_at"`
 }
 
-// GroupSubnet is the many-to-many join between groups and subnets.
-type GroupSubnet struct {
+// GroupRoute is the many-to-many join between groups and routes.
+type GroupRoute struct {
 	ID        string    `db:"id"`
 	GroupID   string    `db:"group_id"`
-	SubnetID  string    `db:"subnet_id"`
+	RouteID   string    `db:"route_id"`
 	CreatedAt time.Time `db:"created_at"`
 }
 
-// DeviceSubnet is a per-device subnet override, set by an admin.
-// When any DeviceSubnets exist for a device, they replace (not append to)
+// DeviceRoute is a per-device route override, set by an admin.
+// When any DeviceRoutes exist for a device, they replace (not append to)
 // the group's subnets for that device's WireGuard AllowedIPs.
-type DeviceSubnet struct {
+type DeviceRoute struct {
 	ID        string    `db:"id"`
 	DeviceID  string    `db:"device_id"`
-	SubnetID  string    `db:"subnet_id"`
+	RouteID   string    `db:"route_id"`
 	CreatedAt time.Time `db:"created_at"`
 }
 
@@ -116,7 +119,7 @@ type Device struct {
 	// Populated by joins.
 	Group         *Group   `db:"-"`
 	User          *User    `db:"-"`
-	Subnets       []Subnet `db:"-"` // device overrides if set, else group subnets
+	Routes        []Route  `db:"-"` // device overrides if set, else group routes
 	ActiveSession *Session `db:"-"`
 }
 
@@ -176,11 +179,13 @@ type Agent struct {
 	ID          string       `db:"id"`
 	Name        string       `db:"name"`
 	Description string       `db:"description"`
-	TokenHash   string       `db:"token"` // bcrypt hashed agent token
+	TokenHash   string       `db:"token"`
+	VPNPool     string       `db:"vpn_pool"`      // CIDR e.g. "10.1.0.0/24"
+	WGPublicKey string       `db:"wg_public_key"` // agent's WireGuard public key
+	Endpoint    string       `db:"endpoint"`      // host:port for client configs
 	IsActive    bool         `db:"is_active"`
 	LastSeenAt  sql.NullTime `db:"last_seen_at"`
 	CreatedAt   time.Time    `db:"created_at"`
-	UpdatedAt   time.Time    `db:"updated_at"`
 
 	// Set at runtime, not stored.
 	Connected bool `db:"-"`
@@ -241,7 +246,22 @@ const (
 
 	AuditEventAgentConnected    = "agent.connected"
 	AuditEventAgentDisconnected = "agent.disconnected"
-	AuditEventAgentPurged       = "agent.purged" // dead man's switch triggered
+	AuditEventAgentCreated      = "agent.created"
+	AuditEventAgentRevoked      = "agent.revoked"
+	AuditEventAgentDeleted      = "agent.deleted"
+	AuditEventAgentUpdated      = "agent.updated"
+
+	AuditEventGroupCreated = "group.created"
+	AuditEventGroupUpdated = "group.updated"
+	AuditEventGroupDeleted = "group.deleted"
+
+	AuditEventRouteCreated = "route.created"
+	AuditEventRouteDeleted = "route.deleted"
+
+	AuditEventGroupRouteAdded   = "group.route.added"
+	AuditEventGroupRouteRemoved = "group.route.removed"
+	AuditEventGroupAgentAdded   = "group.agent.added"
+	AuditEventGroupAgentRemoved = "group.agent.removed"
 )
 
 // LocalAdmin is a local username/password account for emergency admin access.
