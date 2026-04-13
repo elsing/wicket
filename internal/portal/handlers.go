@@ -2,7 +2,6 @@ package portal
 
 import (
 	"context"
-	_ "embed"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -27,9 +26,6 @@ import (
 	"github.com/wicket-vpn/wicket/internal/oidc"
 	"github.com/wicket-vpn/wicket/internal/ws"
 )
-
-//go:embed ../../web/public/static/agent/install.sh
-var agentInstallScript []byte
 
 const (
 	oidcStateCookie = "wicket_oidc_state"
