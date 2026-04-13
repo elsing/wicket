@@ -1,11 +1,15 @@
 package portal
 
+//go:embed ../../web/public/static/agent/install.sh
+var agentInstallScript []byte
+
 import (
 	"context"
+	_ "embed"
+	"errors"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -20,8 +24,8 @@ import (
 
 	qrcode "github.com/skip2/go-qrcode"
 
-	agenthub "github.com/wicket-vpn/wicket/internal/agent"
 	"github.com/wicket-vpn/wicket/internal/config"
+	agenthub "github.com/wicket-vpn/wicket/internal/agent"
 	"github.com/wicket-vpn/wicket/internal/core"
 	"github.com/wicket-vpn/wicket/internal/oidc"
 	"github.com/wicket-vpn/wicket/internal/ws"
@@ -167,15 +171,8 @@ func (h *Handler) handleAgentInstallScript(w http.ResponseWriter, r *http.Reques
 		baseURL = scheme + "://" + r.Host
 	}
 
-	script, err := os.ReadFile("web/public/static/agent/install.sh")
-	if err != nil {
-		h.log.Warn("install script not found", zap.Error(err))
-		http.Error(w, "install script not available", http.StatusNotFound)
-		return
-	}
-
 	// Substitute the server URL placeholder
-	out := strings.ReplaceAll(string(script), "__WICKET_PUBLIC_URL__", baseURL)
+	out := strings.ReplaceAll(string(agentInstallScript), "__WICKET_PUBLIC_URL__", baseURL)
 
 	w.Header().Set("Content-Type", "text/x-shellscript")
 	w.Header().Set("Content-Disposition", `inline; filename="install-agent.sh"`)
@@ -260,7 +257,8 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	})
 
 	// Preserve the next= redirect destination through the OIDC round-trip via a cookie.
-	if next := r.URL.Query().Get("next"); next != "" {
+	// Only accept relative paths (must start with "/" but not "//") to prevent open redirects.
+	if next := r.URL.Query().Get("next"); next != "" && strings.HasPrefix(next, "/") && !strings.HasPrefix(next, "//") {
 		http.SetCookie(w, &http.Cookie{
 			Name:     "wicket_next",
 			Value:    next,
@@ -401,7 +399,7 @@ func (h *Handler) handleCreateDevice(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.log.Warn("creating device", zap.Error(err))
 		groups, _ := h.svc.ListGroupsForUser(r.Context(), session.UserID)
-		renderNewDeviceError(w, r, session, err.Error(), groups)
+		renderNewDeviceError(w, r, session, "Failed to create device. Please try again.", groups)
 		return
 	}
 
@@ -423,7 +421,8 @@ func (h *Handler) handleSetAutoRenew(w http.ResponseWriter, r *http.Request) {
 
 	autoRenew := r.FormValue("auto_renew") == "true"
 	if err := h.svc.SetDeviceAutoRenew(r.Context(), deviceID, session.UserID, autoRenew); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		h.log.Warn("setting device auto-renew", zap.Error(err))
+		http.Error(w, "failed to update device", http.StatusBadRequest)
 		return
 	}
 
@@ -501,7 +500,7 @@ func (h *Handler) handleActivateSession(w http.ResponseWriter, r *http.Request) 
 	vpnSession, err := h.svc.ActivateSession(r.Context(), deviceID, session.UserID, clientIP(r))
 	if err != nil {
 		h.log.Warn("activating session", zap.Error(err))
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, "failed to activate session", http.StatusBadRequest)
 		return
 	}
 
@@ -570,7 +569,7 @@ func (h *Handler) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.svc.RevokeSession(r.Context(), sessionID, userSession.UserID, clientIP(r), false); err != nil {
 		h.log.Warn("revoking session", zap.Error(err))
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, "failed to revoke session", http.StatusBadRequest)
 		return
 	}
 

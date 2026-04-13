@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"net"
 	"net/http"
 	"strconv"
@@ -14,14 +15,15 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/httprate"
 	"go.uber.org/zap"
 
 	"golang.org/x/crypto/bcrypt"
 
-	agenthub "github.com/wicket-vpn/wicket/internal/agent"
 	"github.com/wicket-vpn/wicket/internal/config"
-	"github.com/wicket-vpn/wicket/internal/core"
 	"github.com/wicket-vpn/wicket/internal/db"
+	agenthub "github.com/wicket-vpn/wicket/internal/agent"
+	"github.com/wicket-vpn/wicket/internal/core"
 	"github.com/wicket-vpn/wicket/internal/oidc"
 	"github.com/wicket-vpn/wicket/internal/portal"
 	"github.com/wicket-vpn/wicket/internal/ws"
@@ -47,7 +49,7 @@ type Handler struct {
 // All 500s should go through here so they appear in logs.
 func (h *Handler) serverError(w http.ResponseWriter, msg string, err error) {
 	h.log.Error("admin: "+msg, zap.Error(err))
-	http.Error(w, msg+": "+err.Error(), http.StatusInternalServerError)
+	http.Error(w, msg, http.StatusInternalServerError)
 }
 
 // formError returns an error banner targeted at a specific div ID using
@@ -56,7 +58,7 @@ func formError(w http.ResponseWriter, errorDivID, msg string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("HX-Retarget", "#"+errorDivID)
 	w.Header().Set("HX-Reswap", "innerHTML")
-	fmt.Fprintf(w, `<div class="alert" style="background:var(--error-bg,#fee2e2);color:var(--error-text,#b91c1c);border-radius:6px;padding:10px 14px;font-size:13px">⚠ %s</div>`, msg)
+	fmt.Fprintf(w, `<div class="alert" style="background:var(--error-bg,#fee2e2);color:var(--error-text,#b91c1c);border-radius:6px;padding:10px 14px;font-size:13px">⚠ %s</div>`, html.EscapeString(msg))
 }
 
 // isUniqueViolation reports whether err is a SQLite unique constraint failure.
@@ -101,7 +103,7 @@ func NewHandler(
 	r.Get("/auth/login", h.handleLoginPage)
 	r.Get("/auth/sso", h.handleSSO)
 	r.Get("/auth/callback", h.handleCallback)
-	r.Post("/auth/local", h.handleLocalLogin)
+	r.With(httprate.LimitByIP(5, time.Minute)).Post("/auth/local", h.handleLocalLogin)
 	r.Post("/auth/logout", h.handleLogout)
 
 	r.Group(func(r chi.Router) {
@@ -257,6 +259,7 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request) {
 
 	http.Redirect(w, r, "/", http.StatusFound)
 }
+
 
 func (h *Handler) handleLocalLogin(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
@@ -602,30 +605,17 @@ func (h *Handler) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) groupsData(r *http.Request) AdminGroupsData {
 	sess := portal.SessionFromContext(r.Context())
 	groups, err := h.svc.ListAllGroups(r.Context())
-	if err != nil {
-		h.log.Error("admin: listing groups", zap.Error(err))
-	}
+	if err != nil { h.log.Error("admin: listing groups", zap.Error(err)) }
 	routes, err := h.svc.ListAllRoutes(r.Context())
-	if err != nil {
-		h.log.Error("admin: listing routes", zap.Error(err))
-	}
+	if err != nil { h.log.Error("admin: listing routes", zap.Error(err)) }
 	agents, err := h.svc.DB().ListAgents(r.Context())
-	if err != nil {
-		h.log.Error("admin: listing agents", zap.Error(err))
-	}
+	if err != nil { h.log.Error("admin: listing agents", zap.Error(err)) }
 	groupRoutes, err := h.svc.DB().ListGroupRoutes(r.Context())
-	if err != nil {
-		h.log.Error("admin: listing group routes", zap.Error(err))
-	}
+	if err != nil { h.log.Error("admin: listing group routes", zap.Error(err)) }
 	groupAgents, err := h.svc.DB().GetGroupAgentMap(r.Context())
-	if err != nil {
-		h.log.Error("admin: listing group agents", zap.Error(err))
-	}
-	deviceCounts, err := h.svc.DB().DeviceCountPerGroup(r.Context())
-	if err != nil {
-		h.log.Error("admin: counting devices", zap.Error(err))
-	}
-	_ = err
+	if err != nil { h.log.Error("admin: listing group agents", zap.Error(err)) }
+	deviceCounts, _ := h.svc.DB().DeviceCountPerGroup(r.Context())
+	if err != nil { h.log.Error("admin: counting devices", zap.Error(err)) }
 	agentsByID := make(map[string]*db.Agent, len(agents))
 	for _, a := range agents {
 		agentsByID[a.ID] = a
@@ -724,6 +714,10 @@ func (h *Handler) handleCreateRoute(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "name and cidr are required", http.StatusBadRequest)
 		return
 	}
+	if _, _, err := net.ParseCIDR(cidr); err != nil {
+		http.Error(w, "invalid CIDR format", http.StatusBadRequest)
+		return
+	}
 	if _, err := h.svc.DB().CreateRoute(r.Context(), name, cidr, r.FormValue("description")); err != nil {
 		h.serverError(w, "internal error", err)
 		return
@@ -762,9 +756,7 @@ func (h *Handler) handleAgentsList(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) agentsData(r *http.Request) AdminAgentsData {
 	agents, err := h.svc.DB().ListAgents(r.Context())
-	if err != nil {
-		h.log.Error("admin: listing agents", zap.Error(err))
-	}
+	if err != nil { h.log.Error("admin: listing agents", zap.Error(err)) }
 	counts := h.hub.ConnectedCount()
 	if h.agentHub != nil {
 		connectedIDs := make(map[string]bool)
@@ -817,6 +809,7 @@ func (h *Handler) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("HX-Trigger", `{"refreshAgentsList": true}`)
 	renderAgentToken(w, r, agent, token)
 }
+
 
 func (h *Handler) handleDeleteAgent(w http.ResponseWriter, r *http.Request) {
 	sessDA := portal.SessionFromContext(r.Context())
@@ -895,18 +888,12 @@ func (h *Handler) handleDeviceMetrics(w http.ResponseWriter, r *http.Request) {
 	for i := 1; i < len(snaps); i++ {
 		prev, cur := snaps[i-1], snaps[i]
 		dt := cur.RecordedAt.Sub(prev.RecordedAt).Seconds()
-		if dt <= 0 {
-			dt = 30
-		}
+		if dt <= 0 { dt = 30 }
 		// Rate in bytes/sec. Guard against counter resets (negative deltas).
 		sent := float64(cur.BytesSent-prev.BytesSent) / dt
 		recv := float64(cur.BytesReceived-prev.BytesReceived) / dt
-		if sent < 0 {
-			sent = 0
-		}
-		if recv < 0 {
-			recv = 0
-		}
+		if sent < 0 { sent = 0 }
+		if recv < 0 { recv = 0 }
 		points = append(points, point{
 			Time:          cur.RecordedAt.Format("15:04"),
 			BytesSent:     sent,

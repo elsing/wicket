@@ -453,9 +453,11 @@ func (s *Service) DisableDevice(ctx context.Context, deviceID, actorUserID, ipAd
 		}
 	}
 
-	// Remove from WireGuard immediately
-	if err := s.peers.RemovePeer(dev.PublicKey); err != nil {
-		s.log.Warn("removing peer on disable", zap.String("device", dev.Name), zap.Error(err))
+	// Remove from local WireGuard unless agent-managed (agent handles its own WG).
+	if !s.groupHasActiveAgent(ctx, dev.GroupID) {
+		if err := s.peers.RemovePeer(dev.PublicKey); err != nil {
+			s.log.Warn("removing peer on disable", zap.String("device", dev.Name), zap.Error(err))
+		}
 	}
 	s.notifyAgentPeerRemove(ctx, dev)
 
@@ -619,9 +621,7 @@ func (s *Service) ActivateSession(ctx context.Context, deviceID, userID, ipAddre
 
 	s.emit(Event{Type: EventSessionCreated, DeviceID: deviceID, UserID: userID, OwnerID: userID,
 		Payload: map[string]any{"expires_at": expiresAt}})
-	if s.reconciler != nil {
-		s.reconciler.Trigger()
-	} // push peer to agents immediately
+	if s.reconciler != nil { s.reconciler.Trigger() } // push peer to agents immediately
 
 	// Add the peer to the local WireGuard interface, unless the group is managed
 	// by a remote agent — in that case the agent handles its own WireGuard.
@@ -741,6 +741,10 @@ func (s *Service) ExtendSession(ctx context.Context, sessionID, userID, ipAddres
 	}
 
 	s.emit(Event{Type: EventSessionExtended, DeviceID: dev.ID, UserID: userID})
+
+	// Notify agents with the updated ExpiresAt so they reset their local expiry timers.
+	s.notifyAgentPeerUpdate(ctx, dev, extended)
+
 	return extended, nil
 }
 
@@ -794,9 +798,7 @@ func (s *Service) RevokeSession(ctx context.Context, sessionID, actorUserID, ipA
 		ownerID = dev.UserID
 	}
 	s.emit(Event{Type: EventSessionRevoked, DeviceID: session.DeviceID, UserID: actorUserID, OwnerID: ownerID})
-	if s.reconciler != nil {
-		s.reconciler.Trigger()
-	} // remove peer from agents immediately
+	if s.reconciler != nil { s.reconciler.Trigger() } // remove peer from agents immediately
 	return nil
 }
 
@@ -826,9 +828,7 @@ func (s *Service) AdminExtendSession(ctx context.Context, sessionID, adminUserID
 	if dev, err := s.db.GetDeviceByID(ctx, extended.DeviceID); err == nil {
 		s.notifyAgentPeerUpdate(ctx, dev, extended)
 	}
-	if s.reconciler != nil {
-		s.reconciler.Trigger()
-	}
+	if s.reconciler != nil { s.reconciler.Trigger() }
 	return extended, nil
 }
 

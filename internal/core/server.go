@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
@@ -40,7 +41,7 @@ func New(cfg *config.Config, log *zap.Logger) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening database at %q: %w", cfg.DB.DSN, err)
 	}
-	log.Info("database ready", zap.String("dsn", cfg.DB.DSN))
+	log.Info("database ready", zap.String("dsn", redactDSN(cfg.DB.DSN)))
 
 	// ── WireGuard ─────────────────────────────────────────────────────────────
 	// Ensure the WireGuard interface exists with the correct address before
@@ -212,6 +213,21 @@ func (s *Server) Shutdown() error {
 
 // ReconcilerLastRun returns the last reconciler run time (for health checks).
 func (s *Server) ReconcilerLastRun() time.Time { return s.reconciler.LastRun() }
+
+// redactDSN replaces the password in a PostgreSQL DSN URL with "***" so it
+// can be safely written to logs without exposing credentials.
+func redactDSN(dsn string) string {
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return "[unparseable dsn]"
+	}
+	if u.User != nil {
+		if _, hasPassword := u.User.Password(); hasPassword {
+			u.User = url.UserPassword(u.User.Username(), "***")
+		}
+	}
+	return u.String()
+}
 
 func socketDir(path string) string {
 	for i := len(path) - 1; i >= 0; i-- {
