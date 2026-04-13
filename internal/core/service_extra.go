@@ -23,8 +23,24 @@ func (s *Service) DB() *db.DB {
 // WriteAuditLog is a convenience wrapper for admin handlers.
 // WriteAdminAuditLog logs an admin action with optional metadata.
 func (s *Service) WriteAdminAuditLog(ctx context.Context, actorID, event, ip, metadata string) {
+	// Only set user_id if actorID refers to a row in the users table.
+	// Local admins live in local_admins and must not be passed as a users FK.
+	userID := actorID
+	if actorID != "" {
+		if _, err := s.db.GetUserByID(ctx, actorID); err != nil {
+			// Not a user — local admin or system actor. Store in metadata instead.
+			userID = ""
+			if metadata == "" {
+				metadata = "{}"
+			}
+			// Append actor to metadata
+			if metadata == "{}" {
+				metadata = `{"actor":"` + actorID + `"}`
+			}
+		}
+	}
 	if err := s.db.WriteAuditLog(ctx, &db.AuditLog{
-		UserID:    sql.NullString{String: actorID, Valid: actorID != ""},
+		UserID:    sql.NullString{String: userID, Valid: userID != ""},
 		Event:     event,
 		IPAddress: ip,
 		Metadata:  metadata,

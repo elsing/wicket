@@ -305,29 +305,33 @@ func (r *Reconciler) ensureActivePeers(ctx context.Context) {
 			continue
 		}
 
-		// Already present — nothing to do.
-		if inWG[publicKey] {
-			continue
-		}
+		dev, devErr := r.db.GetDeviceByID(ctx, deviceID)
 
-		// Skip local WireGuard management for agent-managed groups.
-		// The agent is the WireGuard server for those devices.
-		if devFull, err := r.db.GetDeviceByID(ctx, deviceID); err == nil {
-			if agents, err := r.db.GetGroupAgents(ctx, devFull.GroupID); err == nil {
-				agentManaged := false
-				for _, a := range agents {
-					if a.IsActive {
-						agentManaged = true
-						break
-					}
+		// Push to remote agents first — agent-managed groups never appear in local WireGuard.
+		if r.agentHub != nil && devErr == nil {
+			if agentIDs := r.getGroupAgentIDs(ctx, dev.GroupID); len(agentIDs) > 0 {
+				routes, _ := r.db.ListRoutesForDevice(ctx, deviceID)
+				allowedIPs := []string{assignedIP + "/32"}
+				for _, rt := range routes {
+					allowedIPs = append(allowedIPs, rt.CIDR)
 				}
-				if agentManaged {
-					continue
-				}
+				r.agentHub.SendPeerAdd(agentIDs, AgentPeer{
+					PublicKey:  publicKey,
+					AssignedIP: assignedIP + "/32",
+					AllowedIPs: allowedIPs,
+					DeviceID:   deviceID,
+					DeviceName: dev.Name,
+					ExpiresAt:  expiresAt,
+				})
+				continue // agent manages WireGuard for this group
 			}
 		}
 
-		// Missing from WireGuard — rebuild peer config and re-add.
+		// Local WireGuard management for non-agent groups.
+		if inWG[publicKey] {
+			continue // already present
+		}
+
 		peerCfg, err := r.buildPeerConfig(ctx, deviceID, publicKey, assignedIP)
 		if err != nil {
 			r.log.Error("reconciler: building peer config",
@@ -358,27 +362,6 @@ func (r *Reconciler) ensureActivePeers(ctx context.Context) {
 		})
 
 		r.svc.emit(Event{Type: EventPeerAdded, DeviceID: deviceID})
-
-		// Push addition to remote agents assigned to this device's group.
-		if r.agentHub != nil {
-			if dev, err := r.db.GetDeviceByID(ctx, deviceID); err == nil {
-				if agentIDs := r.getGroupAgentIDs(ctx, dev.GroupID); len(agentIDs) > 0 {
-					routes, _ := r.db.ListRoutesForDevice(ctx, deviceID)
-					allowedIPs := []string{assignedIP + "/32"}
-					for _, rt := range routes {
-						allowedIPs = append(allowedIPs, rt.CIDR)
-					}
-					r.agentHub.SendPeerAdd(agentIDs, AgentPeer{
-						PublicKey:  publicKey,
-						AssignedIP: assignedIP + "/32",
-						AllowedIPs: allowedIPs,
-						DeviceID:   deviceID,
-						DeviceName: dev.Name,
-						ExpiresAt:  expiresAt,
-					})
-				}
-			}
-		}
 	}
 
 	if err := rows.Err(); err != nil {
