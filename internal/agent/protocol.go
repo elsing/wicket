@@ -74,6 +74,7 @@ type PeerStats struct {
 	BytesSent     int64     `json:"bytes_sent"`
 	BytesReceived int64     `json:"bytes_received"`
 	LastHandshake time.Time `json:"last_handshake,omitempty"`
+	SourceIP      string    `json:"source_ip,omitempty"` // real public IP from WireGuard endpoint
 }
 
 // StatusPayload is sent periodically by agents with live WireGuard stats.

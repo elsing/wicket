@@ -13,6 +13,7 @@ templ AdminLayout(title string, session *portal.SessionData, activeNav string) {
 		<meta charset="UTF-8"/>
 		<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 		<title>{ title } — Wicket Admin</title>
+		<link rel="icon" type="image/svg+xml" href="/static/favicon.svg"/>
 		<link rel="preconnect" href="https://fonts.googleapis.com"/>
 		<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"/>
 		<script src="https://unpkg.com/htmx.org@2.0.0/dist/htmx.min.js" defer></script>
@@ -1017,7 +1018,8 @@ templ MetricsTable(data AdminMetricsData) {
 					<tr>
 						<th>Device</th>
 						<th>User</th>
-						<th>IP</th>
+						<th>VPN IP</th>
+						<th>Source IP</th>
 						<th>↑ Sent</th>
 						<th>↓ Received</th>
 						<th>Last Handshake</th>
@@ -1036,6 +1038,13 @@ templ MetricsTable(data AdminMetricsData) {
 								</td>
 								<td><code>{ dev.AssignedIP }</code></td>
 								if snap := data.LatestMetrics[dev.ID]; snap != nil {
+									<td class="text-muted">
+										if snap.SourceIP != "" {
+											<code>{ snap.SourceIP }</code>
+										} else {
+											<span>—</span>
+										}
+									</td>
 									<td class="text-muted">{ formatBytes(snap.BytesSent) }</td>
 									<td class="text-muted">{ formatBytes(snap.BytesReceived) }</td>
 									<td class="text-muted">
@@ -1046,6 +1055,7 @@ templ MetricsTable(data AdminMetricsData) {
 										}
 									</td>
 								} else {
+									<td class="text-muted">—</td>
 									<td class="text-muted">—</td>
 									<td class="text-muted">—</td>
 									<td class="text-muted">No data</td>
@@ -1076,6 +1086,7 @@ templ AdminLocalLoginPage(errorMsg string) {
 		<meta charset="UTF-8"/>
 		<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 		<title>Wicket Admin — Sign in</title>
+		<link rel="icon" type="image/svg+xml" href="/static/favicon.svg"/>
 		<link rel="preconnect" href="https://fonts.googleapis.com"/>
 		<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"/>
 		<link rel="stylesheet" href="/static/css/admin.css"/>

@@ -152,6 +152,9 @@ function handleEvent(event) {
       refreshDeviceList();
       if (event.type === 'device.approved') showToast('Your device has been approved!', 'success');
       break;
+    case 'device.renamed':
+      refreshDeviceList();
+      break;
     case 'device.rejected':
     case 'peer.removed':
     case 'session.revoked':

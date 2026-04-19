@@ -7,6 +7,7 @@ const (
 	EventDeviceCreated  EventType = "device.created"
 	EventDeviceApproved EventType = "device.approved"
 	EventDeviceRejected EventType = "device.rejected"
+	EventDeviceRenamed  EventType = "device.renamed"
 
 	EventSessionCreated  EventType = "session.created"
 	EventSessionExtended EventType = "session.extended"

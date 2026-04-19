@@ -258,6 +258,7 @@ func (h *Hub) writeAgentMetrics(_ string, payload StatusPayload) {
 			DeviceID:      dev.ID,
 			BytesSent:     ps.BytesSent,
 			BytesReceived: ps.BytesReceived,
+			SourceIP:      ps.SourceIP,
 		}
 		if !ps.LastHandshake.IsZero() {
 			snap.LastHandshake = sql.NullTime{Time: ps.LastHandshake, Valid: true}

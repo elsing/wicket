@@ -15,6 +15,7 @@ templ Layout(title string, session *SessionData) {
 		<meta charset="UTF-8"/>
 		<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 		<title>{ title } — Wicket</title>
+		<link rel="icon" type="image/svg+xml" href="/static/favicon.svg"/>
 		<link rel="preconnect" href="https://fonts.googleapis.com"/>
 		<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"/>
 		<script src="https://unpkg.com/htmx.org@2.0.0/dist/htmx.min.js" defer></script>
@@ -279,6 +280,19 @@ templ DeviceActions(dev *db.Device) {
 		>
 			Delete
 		</button>
+		if dev.IsApproved && dev.IsActive && !dev.AlwaysConnected {
+			<button
+				class="btn btn-sm btn-ghost"
+				style="color:var(--text-3)"
+				hx-post={ "/devices/" + dev.ID + "/regenerate" }
+				hx-target={ "#device-" + dev.ID }
+				hx-swap="outerHTML"
+				hx-confirm={ "Regenerate keys for " + dev.Name + "? Your existing .conf will stop working and you will need to re-import the new one." }
+				title="Generate a new keypair and config file"
+			>
+				↺ Regen
+			</button>
+		}
 	</div>
 }
 

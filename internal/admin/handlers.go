@@ -137,6 +137,7 @@ func NewHandler(
 		r.Post("/devices/{deviceID}/disable", h.handleDisableDevice)
 		r.Post("/devices/{deviceID}/enable", h.handleEnableDevice)
 		r.Post("/devices/{deviceID}/always-connected", h.handleSetAlwaysConnected)
+		r.Post("/devices/{deviceID}/regenerate", h.handleAdminRegenerateDevice)
 		r.Delete("/devices/{deviceID}", h.handleDeleteDevice)
 		r.Put("/devices/{deviceID}/name", h.handleRenameDevice)
 
@@ -414,6 +415,18 @@ func (h *Handler) handleSetAlwaysConnected(w http.ResponseWriter, r *http.Reques
 		action = "device.always_connected.enabled"
 	}
 	h.svc.WriteAuditLog(r.Context(), deviceID, sess.UserID, action, clientIP(r))
+	h.renderDeviceRow(w, r, deviceID)
+}
+
+func (h *Handler) handleAdminRegenerateDevice(w http.ResponseWriter, r *http.Request) {
+	sess := portal.SessionFromContext(r.Context())
+	deviceID := chi.URLParam(r, "deviceID")
+	if _, err := h.svc.RegenerateDevice(r.Context(), deviceID, sess.UserID, true); err != nil {
+		h.serverError(w, "regenerating device", err)
+		return
+	}
+	h.svc.WriteAuditLog(r.Context(), deviceID, sess.UserID, "device.regenerated", clientIP(r))
+	// Re-render the device row — user will need to re-download config from their portal.
 	h.renderDeviceRow(w, r, deviceID)
 }
 
@@ -988,11 +1001,10 @@ func (h *Handler) handleRenameDevice(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "name required", http.StatusBadRequest)
 		return
 	}
-	if err := h.svc.DB().RenameDevice(r.Context(), deviceID, name); err != nil {
+	if err := h.svc.RenameDevice(r.Context(), deviceID, name); err != nil {
 		h.serverError(w, "renaming device", err)
 		return
 	}
-	// Return updated device row
 	h.renderDeviceRow(w, r, deviceID)
 }
 

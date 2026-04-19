@@ -443,6 +443,7 @@ func (r *Reconciler) sampleMetrics(ctx context.Context) {
 			DeviceID:      dev.ID,
 			BytesSent:     stat.BytesSent,
 			BytesReceived: stat.BytesReceived,
+			SourceIP:      stat.SourceIP,
 		}
 		if !stat.LastHandshake.IsZero() {
 			snap.LastHandshake = sql.NullTime{Time: stat.LastHandshake, Valid: true}

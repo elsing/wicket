@@ -492,6 +492,13 @@ func (d *DB) SetDeviceActive(ctx context.Context, id string, active bool) error 
 	return err
 }
 
+func (d *DB) UpdateDevicePublicKey(ctx context.Context, id, publicKey string) error {
+	_, err := d.sql.ExecContext(ctx,
+		`UPDATE devices SET public_key = $1, config_downloaded = FALSE, updated_at = NOW() WHERE id = $2`,
+		publicKey, id)
+	return err
+}
+
 func (d *DB) SetDeviceAutoRenew(ctx context.Context, id string, autoRenew bool) error {
 	_, err := d.sql.ExecContext(ctx, `UPDATE devices SET auto_renew = $1 WHERE id = $2`, autoRenew, id)
 	return err
@@ -761,16 +768,16 @@ func (d *DB) InsertMetricSnapshot(ctx context.Context, snap *MetricSnapshot) err
 	snap.ID = newID()
 	snap.RecordedAt = time.Now().UTC()
 	_, err := d.sql.ExecContext(ctx, `
-		INSERT INTO metric_snapshots (id, device_id, bytes_sent, bytes_received, last_handshake, recorded_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO metric_snapshots (id, device_id, bytes_sent, bytes_received, last_handshake, source_ip, recorded_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT DO NOTHING
-	`, snap.ID, snap.DeviceID, snap.BytesSent, snap.BytesReceived, snap.LastHandshake, snap.RecordedAt)
+	`, snap.ID, snap.DeviceID, snap.BytesSent, snap.BytesReceived, snap.LastHandshake, snap.SourceIP, snap.RecordedAt)
 	return err
 }
 
 func (d *DB) ListMetricSnapshotsForDevice(ctx context.Context, deviceID string, since time.Time) ([]*MetricSnapshot, error) {
 	rows, err := d.sql.QueryContext(ctx, `
-		SELECT id, device_id, bytes_sent, bytes_received, last_handshake, recorded_at
+		SELECT id, device_id, bytes_sent, bytes_received, last_handshake, source_ip, recorded_at
 		FROM metric_snapshots
 		WHERE device_id = $1 AND recorded_at >= $2
 		ORDER BY recorded_at ASC
@@ -784,7 +791,7 @@ func (d *DB) ListMetricSnapshotsForDevice(ctx context.Context, deviceID string, 
 		var s MetricSnapshot
 		if err := rows.Scan(
 			&s.ID, &s.DeviceID, &s.BytesSent, &s.BytesReceived,
-			&s.LastHandshake, &s.RecordedAt,
+			&s.LastHandshake, &s.SourceIP, &s.RecordedAt,
 		); err != nil {
 			return nil, err
 		}

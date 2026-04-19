@@ -205,6 +205,7 @@ type MetricSnapshot struct {
 	BytesSent     int64        `db:"bytes_sent"`
 	BytesReceived int64        `db:"bytes_received"`
 	LastHandshake sql.NullTime `db:"last_handshake"`
+	SourceIP      string       `db:"source_ip"` // real public IP from WireGuard endpoint
 	RecordedAt    time.Time    `db:"recorded_at"`
 }
 

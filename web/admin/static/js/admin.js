@@ -163,6 +163,13 @@ function refreshAfterSessionChange() {
 
 function handleEvent(event) {
   switch (event.type) {
+    case 'device.renamed':
+      // Update the name span in place — no full refresh needed.
+      if (event.device_id && event.payload?.device_name) {
+        const span = document.getElementById('dev-name-' + event.device_id);
+        if (span) span.textContent = event.payload.device_name;
+      }
+      break;
     case 'device.created':
       refreshAfterDeviceChange();
       showToast('New device pending approval', 'warning');

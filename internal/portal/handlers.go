@@ -110,6 +110,7 @@ func NewHandler(
 		r.Get("/devices/new", h.handleNewDevice)
 		r.Post("/devices", h.handleCreateDevice)
 		r.Post("/devices/{deviceID}/auto-renew", h.handleSetAutoRenew)
+		r.Post("/devices/{deviceID}/regenerate", h.handleRegenerateDevice)
 		r.Delete("/devices/{deviceID}", h.handleDeleteDevice)
 		r.Get("/devices/{deviceID}/qr", h.handleDeviceQR)
 
@@ -467,6 +468,24 @@ func (h *Handler) handleDeviceQR(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "image/png")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Write(png) //nolint:errcheck
+}
+
+func (h *Handler) handleRegenerateDevice(w http.ResponseWriter, r *http.Request) {
+	session := SessionFromContext(r.Context())
+	deviceID := chi.URLParam(r, "deviceID")
+
+	result, err := h.svc.RegenerateDevice(r.Context(), deviceID, session.UserID, false)
+	if err != nil {
+		h.log.Warn("regenerating device", zap.Error(err))
+		http.Error(w, "Failed to regenerate device config.", http.StatusInternalServerError)
+		return
+	}
+
+	renderConfigDownload(w, r, ConfigDownloadData{
+		Session:    session,
+		Device:     result.Device,
+		ConfigFile: result.ConfigFile,
+	})
 }
 
 func (h *Handler) handleDeleteDevice(w http.ResponseWriter, r *http.Request) {

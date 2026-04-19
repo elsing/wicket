@@ -32,8 +32,8 @@ body {
   --text-2:      #5a5f7d;
   --text-3:      #9496a8;
 
-  --border:      #e4e6f0;
-  --border-2:    #d0d3e4;
+  --border:      #dde0ef;
+  --border-2:    #c8ccdf;
 
   --primary:     #5c6ef5;
   --primary-hover: #4b5de8;
@@ -54,8 +54,8 @@ body {
   --muted:       #9496a8;
   --muted-light: #f1f2f8;
 
-  --shadow-sm:   0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
-  --shadow:      0 4px 12px rgba(0,0,0,.08), 0 2px 4px rgba(0,0,0,.04);
+  --shadow-sm:   0 1px 4px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.05);
+  --shadow:      0 4px 16px rgba(0,0,0,.10), 0 2px 4px rgba(0,0,0,.06);
   --shadow-lg:   0 12px 32px rgba(0,0,0,.12), 0 4px 8px rgba(0,0,0,.06);
 }
 

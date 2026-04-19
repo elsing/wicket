@@ -344,6 +344,7 @@ func sendStats(ctx context.Context, conn *websocket.Conn, pm wireguard.PeerManag
 			BytesSent:     s.BytesSent,
 			BytesReceived: s.BytesReceived,
 			LastHandshake: s.LastHandshake,
+			SourceIP:      s.SourceIP,
 		})
 	}
 	_ = wsjson.Write(ctx, conn, agent.Envelope{

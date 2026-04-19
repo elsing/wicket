@@ -186,7 +186,7 @@ func (d *DB) DeduplicateSessions(ctx context.Context) (int64, error) {
 // GetLatestMetricPerDevice returns the most recent snapshot for each device.
 func (d *DB) GetLatestMetricPerDevice(ctx context.Context) (map[string]*MetricSnapshot, error) {
 	rows, err := d.sql.QueryContext(ctx, `
-		SELECT m.id, m.device_id, m.bytes_sent, m.bytes_received, m.last_handshake, m.recorded_at
+		SELECT m.id, m.device_id, m.bytes_sent, m.bytes_received, m.last_handshake, m.source_ip, m.recorded_at
 		FROM metric_snapshots m
 		INNER JOIN (
 			SELECT device_id, MAX(recorded_at) as latest
@@ -202,7 +202,7 @@ func (d *DB) GetLatestMetricPerDevice(ctx context.Context) (map[string]*MetricSn
 	for rows.Next() {
 		var s MetricSnapshot
 		if err := rows.Scan(&s.ID, &s.DeviceID, &s.BytesSent, &s.BytesReceived,
-			&s.LastHandshake, &s.RecordedAt); err != nil {
+			&s.LastHandshake, &s.SourceIP, &s.RecordedAt); err != nil {
 			return nil, err
 		}
 		result[s.DeviceID] = &s

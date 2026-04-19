@@ -657,6 +657,88 @@ func (s *Service) GetDevicesForUser(ctx context.Context, userID string) ([]*db.D
 	return devices, nil
 }
 
+// RegenerateDevice generates a fresh WireGuard keypair for an existing device.
+// The old peer is removed from WireGuard, the new public key is stored, and a
+// new one-time config is returned. config_downloaded is reset so the user must
+// re-download. The device keeps its assigned IP and group.
+func (s *Service) RegenerateDevice(ctx context.Context, deviceID, userID string, isAdmin bool) (*CreateDeviceResult, error) {
+	dev, err := s.db.GetDeviceByID(ctx, deviceID)
+	if err != nil {
+		return nil, fmt.Errorf("getting device: %w", err)
+	}
+	if !isAdmin && dev.UserID != userID {
+		return nil, errors.New("not authorised to regenerate this device")
+	}
+
+	privateKey, publicKey, err := wireguard.GenerateKeypair()
+	if err != nil {
+		return nil, fmt.Errorf("generating keypair: %w", err)
+	}
+
+	// Remove old peer from WireGuard before updating the key.
+	if !s.groupHasActiveAgent(ctx, dev.GroupID) {
+		if err := s.peers.RemovePeer(dev.PublicKey); err != nil {
+			s.log.Warn("regenerate: removing old peer", zap.String("device", dev.Name), zap.Error(err))
+		}
+	}
+	s.notifyAgentPeerRemove(ctx, dev)
+
+	if err := s.db.UpdateDevicePublicKey(ctx, deviceID, publicKey); err != nil {
+		return nil, fmt.Errorf("updating public key: %w", err)
+	}
+
+	// Reload device with new key.
+	dev, err = s.db.GetDeviceByID(ctx, deviceID)
+	if err != nil {
+		return nil, fmt.Errorf("reloading device: %w", err)
+	}
+
+	// Revoke any active session — the peer needs re-adding after key change.
+	if active, err := s.db.GetActiveSessionForDevice(ctx, deviceID); err == nil && active != nil {
+		_ = s.RevokeSession(ctx, active.ID, userID, "system", isAdmin)
+	}
+
+	if err := s.db.WriteAuditLog(ctx, &db.AuditLog{
+		UserID:    sql.NullString{String: userID, Valid: true},
+		DeviceID:  sql.NullString{String: deviceID, Valid: true},
+		Event:     "device.regenerated",
+		IPAddress: "system",
+		Metadata:  db.AuditMeta("device_name", dev.Name),
+	}); err != nil {
+		s.log.Warn("writing device regenerated audit log", zap.Error(err))
+	}
+
+	conf, err := s.buildClientConfig(ctx, dev, privateKey)
+	if err != nil {
+		return nil, fmt.Errorf("building client config: %w", err)
+	}
+
+	return &CreateDeviceResult{
+		Device:     dev,
+		PrivateKey: privateKey,
+		ConfigFile: conf,
+	}, nil
+}
+
+// RenameDevice renames a device and emits a device.renamed event so all
+// connected clients update in real-time without a full page refresh.
+func (s *Service) RenameDevice(ctx context.Context, deviceID, name string) error {
+	dev, err := s.db.GetDeviceByID(ctx, deviceID)
+	if err != nil {
+		return fmt.Errorf("getting device: %w", err)
+	}
+	if err := s.db.RenameDevice(ctx, deviceID, name); err != nil {
+		return err
+	}
+	s.emit(Event{
+		Type:    EventDeviceRenamed,
+		DeviceID: deviceID,
+		OwnerID: dev.UserID,
+		Payload: map[string]any{"device_name": name},
+	})
+	return nil
+}
+
 // SetDeviceAutoRenew sets the auto_renew flag on a device the user owns.
 func (s *Service) SetDeviceAutoRenew(ctx context.Context, deviceID, userID string, autoRenew bool) error {
 	dev, err := s.db.GetDeviceByID(ctx, deviceID)
