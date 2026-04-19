@@ -444,25 +444,6 @@ templ DeviceRow(dev *db.Device) {
 					hx-post={ "/devices/" + dev.ID + "/enable" }
 					hx-target={ "#dev-" + dev.ID } hx-swap="outerHTML">Enable</button>
 			}
-		<td class="table-actions">
-			if !dev.IsApproved {
-				<button class="btn btn-sm btn-primary"
-					hx-post={ "/devices/" + dev.ID + "/approve" }
-					hx-target={ "#dev-" + dev.ID } hx-swap="outerHTML">Approve</button>
-				<button class="btn btn-sm btn-ghost"
-					hx-post={ "/devices/" + dev.ID + "/reject" }
-					hx-target={ "#dev-" + dev.ID } hx-swap="delete"
-					hx-confirm={ "Reject \"" + dev.Name + "\"?" }>Reject</button>
-			} else if dev.IsActive {
-				<button class="btn btn-sm btn-ghost"
-					hx-post={ "/devices/" + dev.ID + "/disable" }
-					hx-target={ "#dev-" + dev.ID } hx-swap="outerHTML"
-					hx-confirm={ "Disable \"" + dev.Name + "\"?" }>Disable</button>
-			} else {
-				<button class="btn btn-sm btn-outline"
-					hx-post={ "/devices/" + dev.ID + "/enable" }
-					hx-target={ "#dev-" + dev.ID } hx-swap="outerHTML">Enable</button>
-			}
 			<div class="admin-row-menu" style="position:relative;display:inline-block">
 				<button class="btn btn-sm btn-ghost" data-admin-menu={ dev.ID } title="More options">⋯</button>
 				<div class="admin-row-dropdown" id={ "admin-menu-" + dev.ID }>
