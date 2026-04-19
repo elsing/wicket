@@ -10,9 +10,10 @@ type MsgType string
 
 const (
 	// Server → Agent
-	MsgSync       MsgType = "sync"        // full peer list on connect
-	MsgPeerAdd    MsgType = "peer.add"    // add or update a WireGuard peer
-	MsgPeerRemove MsgType = "peer.remove" // remove a WireGuard peer
+	MsgSync         MsgType = "sync"          // full peer list on connect
+	MsgPeerAdd      MsgType = "peer.add"      // add or update a WireGuard peer
+	MsgPeerRemove   MsgType = "peer.remove"   // remove a WireGuard peer
+	MsgRequestStats MsgType = "request.stats" // ask agent to send stats immediately
 
 	// Agent → Server
 	MsgReady  MsgType = "ready"  // agent is up and connected

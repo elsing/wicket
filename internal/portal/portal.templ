@@ -191,20 +191,6 @@ templ DeviceCard(dev *db.Device) {
 
 		<div class="device-card-footer">
 			@DeviceActions(dev)
-			if !dev.AlwaysConnected {
-				<label class="toggle-label">
-					<span>Auto-renew</span>
-					<input
-						type="checkbox"
-						class="toggle"
-						checked?={ dev.AutoRenew }
-						hx-post={ "/devices/" + dev.ID + "/auto-renew" }
-						hx-vals={ autoRenewVal(!dev.AutoRenew) }
-						hx-target={ "#device-" + dev.ID }
-						hx-swap="outerHTML"
-					/>
-				</label>
-			}
 		</div>
 	</div>
 }
@@ -227,7 +213,7 @@ templ DeviceStatusBadge(dev *db.Device) {
 	}
 }
 
-// DeviceActions renders the action buttons for a device card.
+// DeviceActions renders the primary action button and a ⋯ menu for secondary actions.
 templ DeviceActions(dev *db.Device) {
 	<div class="device-actions">
 		if dev.IsApproved && dev.IsActive && !dev.AlwaysConnected {
@@ -254,9 +240,7 @@ templ DeviceActions(dev *db.Device) {
 					hx-delete={ "/sessions/" + dev.ActiveSession.ID }
 					hx-target={ "#device-" + dev.ID }
 					hx-swap="outerHTML"
-				>
-					Deactivate
-				</button>
+				>Deactivate</button>
 			} else {
 				<button
 					class="btn btn-sm btn-primary"
@@ -265,34 +249,44 @@ templ DeviceActions(dev *db.Device) {
 					hx-target={ "#device-" + dev.ID }
 					hx-swap="outerHTML"
 					hx-disabled-elt="this"
-				>
-					Activate
-				</button>
+				>Activate</button>
 			}
 		}
-		<button
-			class="btn btn-sm btn-ghost"
-			style="color:var(--error-text)"
-			hx-delete={ "/devices/" + dev.ID }
-			hx-target={ "#device-" + dev.ID }
-			hx-swap="delete"
-			hx-confirm={ "Delete " + dev.Name + "? This cannot be undone." }
-		>
-			Delete
-		</button>
-		if dev.IsApproved && dev.IsActive && !dev.AlwaysConnected {
-			<button
-				class="btn btn-sm btn-ghost"
-				style="color:var(--text-3)"
-				hx-post={ "/devices/" + dev.ID + "/regenerate" }
-				hx-target={ "#device-" + dev.ID }
-				hx-swap="outerHTML"
-				hx-confirm={ "Regenerate keys for " + dev.Name + "? Your existing .conf will stop working and you will need to re-import the new one." }
-				title="Generate a new keypair and config file"
-			>
-				↺ Regen
-			</button>
-		}
+		<div class="device-menu">
+			<button class="device-menu-btn" data-menu={ dev.ID } title="More options">⋯</button>
+			<div class="device-menu-dropdown" id={ "menu-" + dev.ID }>
+				if dev.IsApproved && dev.IsActive && !dev.AlwaysConnected {
+					<button
+						class="device-menu-item"
+						hx-post={ "/devices/" + dev.ID + "/regenerate" }
+						hx-target={ "#device-" + dev.ID }
+						hx-swap="outerHTML"
+						hx-confirm={ "Regenerate keys for " + dev.Name + "? Your existing .conf will stop working and you will need to re-import the new one." }
+					>↺ Regenerate keys</button>
+					<div class="device-menu-divider"></div>
+					<label class="device-menu-toggle">
+						<span>Auto-renew</span>
+						<input
+							type="checkbox"
+							class="toggle"
+							checked?={ dev.AutoRenew }
+							hx-post={ "/devices/" + dev.ID + "/auto-renew" }
+							hx-vals={ autoRenewVal(!dev.AutoRenew) }
+							hx-target={ "#device-" + dev.ID }
+							hx-swap="outerHTML"
+						/>
+					</label>
+					<div class="device-menu-divider"></div>
+				}
+				<button
+					class="device-menu-item danger"
+					hx-delete={ "/devices/" + dev.ID }
+					hx-target={ "#device-" + dev.ID }
+					hx-swap="delete"
+					hx-confirm={ "Delete " + dev.Name + "? This cannot be undone." }
+				>Delete device</button>
+			</div>
+		</div>
 	</div>
 }
 

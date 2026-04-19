@@ -38,6 +38,27 @@ document.addEventListener('keydown', function(e) {
 });
 
 
+// ── Admin row dropdown menus ──────────────────────────────────────────────────
+document.addEventListener('click', function(e) {
+  const btn = e.target.closest('[data-admin-menu]');
+  if (btn) {
+    e.stopPropagation();
+    const id = btn.dataset.adminMenu;
+    const menu = document.getElementById('admin-menu-' + id);
+    if (!menu) return;
+    document.querySelectorAll('.admin-row-dropdown.open').forEach(m => {
+      if (m !== menu) m.classList.remove('open');
+    });
+    menu.classList.toggle('open');
+    return;
+  }
+  document.querySelectorAll('.admin-row-dropdown.open').forEach(m => m.classList.remove('open'));
+});
+
+document.addEventListener('htmx:afterSwap', function() {
+  document.querySelectorAll('.admin-row-dropdown.open').forEach(m => m.classList.remove('open'));
+});
+
 // ── Confirmation Modal ────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function() {
   const modal = document.createElement('div');

@@ -398,7 +398,83 @@ body {
   gap: 10px;
 }
 
-.device-actions { display: flex; gap: 8px; }
+.device-actions { display: flex; gap: 8px; align-items: center; }
+
+/* ── Device menu (⋯ dropdown for secondary actions) ─────────────────────────── */
+.device-menu {
+  position: relative;
+}
+.device-menu-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  transition: background var(--transition), color var(--transition);
+  flex-shrink: 0;
+}
+.device-menu-btn:hover { background: var(--bg-hover); color: var(--text); }
+.device-menu-dropdown {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  min-width: 160px;
+  z-index: 50;
+  overflow: hidden;
+}
+.device-menu-dropdown.open { display: block; }
+.device-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 14px;
+  background: transparent;
+  border: none;
+  font-family: inherit;
+  font-size: 13.5px;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition);
+}
+.device-menu-item:hover { background: var(--bg-hover); }
+.device-menu-item.danger { color: var(--error-text); }
+.device-menu-item.danger:hover { background: var(--error-light); }
+.device-menu-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+.device-menu-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 14px;
+  background: transparent;
+  border: none;
+  font-family: inherit;
+  font-size: 13.5px;
+  color: var(--text);
+  cursor: pointer;
+  transition: background var(--transition);
+}
+.device-menu-toggle:hover { background: var(--bg-hover); }
+
 
 /* ── Toggle ─────────────────────────────────────────────────────────────────── */
 .toggle-label {

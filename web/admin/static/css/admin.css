@@ -446,3 +446,35 @@ body { background: var(--bg); color: var(--text); }
   .two-col { grid-template-columns: 1fr; }
   .admin-main { padding: 16px; }
 }
+
+/* ── Admin row dropdown menu ─────────────────────────────────────────────────── */
+.admin-row-dropdown {
+  display: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+  min-width: 180px;
+  z-index: 100;
+  overflow: hidden;
+}
+.admin-row-dropdown.open { display: block; }
+.admin-row-item {
+  display: block;
+  width: 100%;
+  padding: 9px 14px;
+  background: transparent;
+  border: none;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition);
+}
+.admin-row-item:hover { background: var(--bg-hover); }
+.admin-row-item.danger { color: var(--error-text); }
+.admin-row-item.danger:hover { background: var(--error-light); }

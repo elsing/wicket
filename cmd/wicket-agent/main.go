@@ -359,6 +359,12 @@ func sendStats(ctx context.Context, conn *websocket.Conn, pm wireguard.PeerManag
 
 func handleMessage(ctx context.Context, conn *websocket.Conn, pm wireguard.PeerManager, expiry *expiryTracker, env agent.Envelope) error {
 	switch env.Type {
+	case agent.MsgRequestStats:
+		// Server is requesting an immediate stats report — send now rather than
+		// waiting for the next 30s ticker. Useful on connect to populate metrics fast.
+		sendStats(ctx, conn, pm)
+		return nil
+
 	case agent.MsgSync:
 		payload, err := decodePayload[agent.SyncPayload](env.Payload)
 		if err != nil {

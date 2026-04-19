@@ -13,7 +13,31 @@ window.toggleTheme = function() {
   localStorage.setItem('theme', next);
 };
 
-// ── Copy config ───────────────────────────────────────────────────────────────
+// ── Device action menu (⋯ dropdown) ──────────────────────────────────────────
+document.addEventListener('click', function(e) {
+  const btn = e.target.closest('[data-menu]');
+  if (btn) {
+    e.stopPropagation();
+    const id = btn.dataset.menu;
+    const menu = document.getElementById('menu-' + id);
+    if (!menu) return;
+    // Close all other open menus first
+    document.querySelectorAll('.device-menu-dropdown.open').forEach(m => {
+      if (m !== menu) m.classList.remove('open');
+    });
+    menu.classList.toggle('open');
+    return;
+  }
+  // Click outside — close all menus
+  document.querySelectorAll('.device-menu-dropdown.open').forEach(m => m.classList.remove('open'));
+});
+
+// Re-attach menu close after HTMX swaps
+document.addEventListener('htmx:afterSwap', function() {
+  document.querySelectorAll('.device-menu-dropdown.open').forEach(m => m.classList.remove('open'));
+});
+
+
 window.copyConfig = function(btn) {
   const config = btn.dataset.config;
   if (!config) return;

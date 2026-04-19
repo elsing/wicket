@@ -148,8 +148,9 @@ func (h *Hub) HandleConnect(w http.ResponseWriter, r *http.Request, agentID stri
 	// Touch last_seen in DB
 	_ = h.db.TouchAgentSeen(r.Context(), agentID)
 
-	// Send full sync immediately
+	// Send full sync immediately, then request stats so metrics are fresh on connect.
 	ca.send <- Envelope{Type: MsgSync, MsgID: newMsgID(), Payload: syncPayload}
+	ca.send <- Envelope{Type: MsgRequestStats, MsgID: newMsgID()}
 
 	defer func() {
 		h.mu.Lock()

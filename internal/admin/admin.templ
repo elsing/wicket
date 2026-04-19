@@ -444,23 +444,52 @@ templ DeviceRow(dev *db.Device) {
 					hx-post={ "/devices/" + dev.ID + "/enable" }
 					hx-target={ "#dev-" + dev.ID } hx-swap="outerHTML">Enable</button>
 			}
-			if dev.IsApproved {
-				if dev.AlwaysConnected {
-					<button class="btn btn-sm btn-outline" title="Always Connected — click to disable"
-						hx-post={ "/devices/" + dev.ID + "/always-connected" }
-						hx-vals={ alwaysConnectedVal(false) }
-						hx-target={ "#dev-" + dev.ID } hx-swap="outerHTML">∞ On</button>
-				} else {
-					<button class="btn btn-sm btn-ghost" title="Click to make always connected"
-						hx-post={ "/devices/" + dev.ID + "/always-connected" }
-						hx-vals={ alwaysConnectedVal(true) }
-						hx-target={ "#dev-" + dev.ID } hx-swap="outerHTML">∞</button>
-				}
+		<td class="table-actions">
+			if !dev.IsApproved {
+				<button class="btn btn-sm btn-primary"
+					hx-post={ "/devices/" + dev.ID + "/approve" }
+					hx-target={ "#dev-" + dev.ID } hx-swap="outerHTML">Approve</button>
+				<button class="btn btn-sm btn-ghost"
+					hx-post={ "/devices/" + dev.ID + "/reject" }
+					hx-target={ "#dev-" + dev.ID } hx-swap="delete"
+					hx-confirm={ "Reject \"" + dev.Name + "\"?" }>Reject</button>
+			} else if dev.IsActive {
+				<button class="btn btn-sm btn-ghost"
+					hx-post={ "/devices/" + dev.ID + "/disable" }
+					hx-target={ "#dev-" + dev.ID } hx-swap="outerHTML"
+					hx-confirm={ "Disable \"" + dev.Name + "\"?" }>Disable</button>
+			} else {
+				<button class="btn btn-sm btn-outline"
+					hx-post={ "/devices/" + dev.ID + "/enable" }
+					hx-target={ "#dev-" + dev.ID } hx-swap="outerHTML">Enable</button>
 			}
-			<button class="btn btn-sm btn-ghost" style="color:var(--error-text)"
-				hx-delete={ "/devices/" + dev.ID }
-				hx-target={ "#dev-" + dev.ID } hx-swap="delete"
-				hx-confirm={ "Permanently delete \"" + dev.Name + "\"?" }>Delete</button>
+			<div class="admin-row-menu" style="position:relative;display:inline-block">
+				<button class="btn btn-sm btn-ghost" data-admin-menu={ dev.ID } title="More options">⋯</button>
+				<div class="admin-row-dropdown" id={ "admin-menu-" + dev.ID }>
+					if dev.IsApproved {
+						if dev.AlwaysConnected {
+							<button class="admin-row-item"
+								hx-post={ "/devices/" + dev.ID + "/always-connected" }
+								hx-vals={ alwaysConnectedVal(false) }
+								hx-target={ "#dev-" + dev.ID } hx-swap="outerHTML">∞ Disable always-on</button>
+						} else {
+							<button class="admin-row-item"
+								hx-post={ "/devices/" + dev.ID + "/always-connected" }
+								hx-vals={ alwaysConnectedVal(true) }
+								hx-target={ "#dev-" + dev.ID } hx-swap="outerHTML">∞ Enable always-on</button>
+						}
+						<button class="admin-row-item"
+							hx-post={ "/devices/" + dev.ID + "/regenerate" }
+							hx-target={ "#dev-" + dev.ID } hx-swap="outerHTML"
+							hx-confirm={ "Force regenerate keys for \"" + dev.Name + "\"? The user must re-download their config." }>↺ Regenerate keys</button>
+						<div style="height:1px;background:var(--border);margin:4px 0"></div>
+					}
+					<button class="admin-row-item danger"
+						hx-delete={ "/devices/" + dev.ID }
+						hx-target={ "#dev-" + dev.ID } hx-swap="delete"
+						hx-confirm={ "Permanently delete \"" + dev.Name + "\"?" }>Delete</button>
+				</div>
+			</div>
 		</td>
 	</tr>
 }
