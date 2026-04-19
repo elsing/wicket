@@ -109,9 +109,10 @@ type Device struct {
 	PublicKey        string       `db:"public_key"`
 	AssignedIP       string       `db:"assigned_ip"`
 	IsApproved       bool         `db:"is_approved"`
-	IsActive         bool         `db:"is_active"`         // admin-level toggle
-	AutoRenew        bool         `db:"auto_renew"`        // activate session on portal login
-	ConfigDownloaded bool         `db:"config_downloaded"` // one-time download guard
+	IsActive         bool         `db:"is_active"`          // admin-level toggle
+	AutoRenew        bool         `db:"auto_renew"`         // activate session on portal login
+	AlwaysConnected  bool         `db:"always_connected"`   // never expire, never evict
+	ConfigDownloaded bool         `db:"config_downloaded"`  // one-time download guard
 	CreatedAt        time.Time    `db:"created_at"`
 	UpdatedAt        time.Time    `db:"updated_at"`
 	LastSeenAt       sql.NullTime `db:"last_seen_at"`
@@ -176,16 +177,17 @@ func (s *Session) TimeRemaining() time.Duration {
 // Each agent manages its own WireGuard interface and receives peer updates
 // via WebSocket from the core.
 type Agent struct {
-	ID          string       `db:"id"`
-	Name        string       `db:"name"`
-	Description string       `db:"description"`
-	TokenHash   string       `db:"token"`
-	VPNPool     string       `db:"vpn_pool"`      // CIDR e.g. "10.1.0.0/24"
-	WGPublicKey string       `db:"wg_public_key"` // agent's WireGuard public key
-	Endpoint    string       `db:"endpoint"`      // host:port for client configs
-	IsActive    bool         `db:"is_active"`
-	LastSeenAt  sql.NullTime `db:"last_seen_at"`
-	CreatedAt   time.Time    `db:"created_at"`
+	ID           string       `db:"id"`
+	Name         string       `db:"name"`
+	Description  string       `db:"description"`
+	TokenHash    string       `db:"token"`
+	VPNPool      string       `db:"vpn_pool"`       // CIDR e.g. "10.1.0.0/24"
+	WGPublicKey  string       `db:"wg_public_key"`  // agent's WireGuard public key
+	WGPrivateKey string       `db:"wg_private_key"` // agent's WireGuard private key (server-stored)
+	Endpoint     string       `db:"endpoint"`       // host:port for client configs
+	IsActive     bool         `db:"is_active"`
+	LastSeenAt   sql.NullTime `db:"last_seen_at"`
+	CreatedAt    time.Time    `db:"created_at"`
 
 	// Set at runtime, not stored.
 	Connected bool `db:"-"`

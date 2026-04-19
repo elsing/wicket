@@ -101,17 +101,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	privKey := *privateKey
-	if privKey == "" {
-		var pubKey string
-		var err error
-		privKey, pubKey, err = wireguard.GenerateKeypair()
-		if err != nil {
-			log.Fatalf("generating WireGuard keypair: %v", err)
-		}
-		log.Printf("Generated WireGuard keypair")
-		log.Printf("Public key: %s", pubKey)
-		log.Printf("Store the private key with --private-key to persist it across restarts")
+	// The server sends the WireGuard private key in the first sync message.
+	// --private-key is a legacy fallback for agent records created before
+	// server-side key storage was introduced. New agents don't need it.
+	if *privateKey != "" {
+		log.Printf("Note: --private-key flag set; will be used only if server does not provide a key")
 	}
 
 	if err := setupInterface(*iface); err != nil {
@@ -122,7 +116,7 @@ func main() {
 	defer cancel()
 
 	log.Printf("wicket-agent %s starting, interface: %s, server: %s", version, *iface, *serverURL)
-	runLoop(ctx, privKey)
+	runLoop(ctx, *privateKey)
 }
 
 // runLoop connects to Wicket and reconnects on disconnect.
@@ -226,8 +220,7 @@ func (t *expiryTracker) cancelAll() {
 	}
 }
 
-func connect(ctx context.Context, privKey string) error {
-	// serverURL is the full WebSocket URL including path
+func connect(ctx context.Context, localPrivKey string) error {
 	wsURL := *serverURL
 	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
 		HTTPHeader: map[string][]string{
@@ -241,29 +234,48 @@ func connect(ctx context.Context, privKey string) error {
 
 	log.Println("Connected to Wicket core")
 
-	// Derive public key from private key to send in ready message.
-	// Wicket stores this and embeds it in device configs so clients
-	// connect to the right server when using a remote agent.
-	pubKey, err := wireguard.ServerPublicKey(privKey)
-	if err != nil {
-		return fmt.Errorf("deriving public key: %w", err)
-	}
-
-	// Send ready message
+	// Send ready message without a public key yet — the server will send
+	// the canonical private key in the first sync message.
 	hostname, _ := os.Hostname()
 	if err := wsjson.Write(ctx, conn, agent.Envelope{
 		Type: agent.MsgReady,
 		Payload: agent.ReadyPayload{
 			AgentVersion: version,
 			Hostname:     hostname,
-			WGPublicKey:  pubKey,
 			ConnectedAt:  time.Now(),
 		},
 	}); err != nil {
 		return fmt.Errorf("sending ready: %w", err)
 	}
 
-	// Initialise local WireGuard peer manager
+	// Read the first message — must be a sync containing the private key.
+	var firstEnv agent.Envelope
+	if err := wsjson.Read(ctx, conn, &firstEnv); err != nil {
+		return fmt.Errorf("reading initial sync: %w", err)
+	}
+	if firstEnv.Type != agent.MsgSync {
+		return fmt.Errorf("expected sync as first message, got %s", firstEnv.Type)
+	}
+	syncPayload, err := decodePayload[agent.SyncPayload](firstEnv.Payload)
+	if err != nil {
+		return fmt.Errorf("decoding initial sync: %w", err)
+	}
+
+	// Use the server-provided private key if present; fall back to the local
+	// one for agents created before server-side key generation was introduced.
+	privKey := syncPayload.PrivateKey
+	if privKey == "" {
+		if localPrivKey == "" {
+			return fmt.Errorf("server did not provide a private key and no --private-key flag set")
+		}
+		log.Printf("Server did not send a private key — using local --private-key flag (legacy agent record)")
+		privKey = localPrivKey
+	} else {
+		pubKey, _ := wireguard.ServerPublicKey(privKey)
+		log.Printf("Using server-provided WireGuard key, public key: %s...", pubKey[:8])
+	}
+
+	// Now configure WireGuard with the resolved key.
 	pm, err := wireguard.NewLocalPeerManager(*iface)
 	if err != nil {
 		return fmt.Errorf("opening WireGuard interface %s: %w", *iface, err)
@@ -277,11 +289,20 @@ func connect(ctx context.Context, privKey string) error {
 	expiry := newExpiryTracker(pm)
 	defer expiry.cancelAll()
 
-	// Send stats every 30s alongside the server's ping
+	// Apply the initial sync payload now that WireGuard is configured.
+	log.Printf("Sync received: %d peers", len(syncPayload.Peers))
+	for _, p := range syncPayload.Peers {
+		expiry.set(p.PublicKey, p.ExpiresAt)
+	}
+	if err := applySync(pm, expiry, syncPayload); err != nil {
+		log.Printf("Error applying initial sync: %v", err)
+	}
+
+	// Send stats every 30s alongside the server's ping.
 	statsTicker := time.NewTicker(30 * time.Second)
 	defer statsTicker.Stop()
 
-	// Message loop — multiplexed with stats ticker
+	// Message loop — multiplexed with stats ticker.
 	readCh := make(chan agent.Envelope, 8)
 	errCh := make(chan error, 1)
 	go func() {

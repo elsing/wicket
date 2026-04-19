@@ -190,18 +190,20 @@ templ DeviceCard(dev *db.Device) {
 
 		<div class="device-card-footer">
 			@DeviceActions(dev)
-			<label class="toggle-label">
-				<span>Auto-renew</span>
-				<input
-					type="checkbox"
-					class="toggle"
-					checked?={ dev.AutoRenew }
-					hx-post={ "/devices/" + dev.ID + "/auto-renew" }
-					hx-vals={ autoRenewVal(!dev.AutoRenew) }
-					hx-target={ "#device-" + dev.ID }
-					hx-swap="outerHTML"
-				/>
-			</label>
+			if !dev.AlwaysConnected {
+				<label class="toggle-label">
+					<span>Auto-renew</span>
+					<input
+						type="checkbox"
+						class="toggle"
+						checked?={ dev.AutoRenew }
+						hx-post={ "/devices/" + dev.ID + "/auto-renew" }
+						hx-vals={ autoRenewVal(!dev.AutoRenew) }
+						hx-target={ "#device-" + dev.ID }
+						hx-swap="outerHTML"
+					/>
+				</label>
+			}
 		</div>
 	</div>
 }
@@ -212,6 +214,8 @@ templ DeviceStatusBadge(dev *db.Device) {
 		<span class="badge badge-warning">Pending</span>
 	} else if !dev.IsActive {
 		<span class="badge badge-error" title="This device has been disabled by an administrator">Disabled by admin</span>
+	} else if dev.AlwaysConnected {
+		<span class="badge badge-success" title="This device is always connected — managed by an administrator">∞ Always on</span>
 	} else if dev.ActiveSession != nil && dev.ActiveSession.IsActive() {
 		<span class="badge badge-success session-badge"
 			data-expires-at={ dev.ActiveSession.ExpiresAt.Format("2006-01-02T15:04:05Z") }>
@@ -225,7 +229,7 @@ templ DeviceStatusBadge(dev *db.Device) {
 // DeviceActions renders the action buttons for a device card.
 templ DeviceActions(dev *db.Device) {
 	<div class="device-actions">
-		if dev.IsApproved && dev.IsActive {
+		if dev.IsApproved && dev.IsActive && !dev.AlwaysConnected {
 			if dev.ActiveSession != nil && dev.ActiveSession.IsActive() {
 				{{ canExtend := dev.Group == nil || !dev.Group.MaxExtensions.Valid || int64(dev.ActiveSession.ExtensionCount) < dev.Group.MaxExtensions.Int64 }}
 				if canExtend {

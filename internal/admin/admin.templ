@@ -63,6 +63,9 @@ templ AdminLayout(title string, session *portal.SessionData, activeNav string) {
 						<div class="live-dot"></div>
 						<span>Live</span>
 					</div>
+					<form method="POST" action="/auth/logout" style="margin:0">
+						<button type="submit" class="btn btn-sm btn-ghost">Sign out</button>
+					</form>
 				</div>
 			</header>
 			<main class="admin-main" id="main-content">
@@ -439,6 +442,19 @@ templ DeviceRow(dev *db.Device) {
 				<button class="btn btn-sm btn-outline"
 					hx-post={ "/devices/" + dev.ID + "/enable" }
 					hx-target={ "#dev-" + dev.ID } hx-swap="outerHTML">Enable</button>
+			}
+			if dev.IsApproved {
+				if dev.AlwaysConnected {
+					<button class="btn btn-sm btn-outline" title="Always Connected — click to disable"
+						hx-post={ "/devices/" + dev.ID + "/always-connected" }
+						hx-vals={ alwaysConnectedVal(false) }
+						hx-target={ "#dev-" + dev.ID } hx-swap="outerHTML">∞ On</button>
+				} else {
+					<button class="btn btn-sm btn-ghost" title="Click to make always connected"
+						hx-post={ "/devices/" + dev.ID + "/always-connected" }
+						hx-vals={ alwaysConnectedVal(true) }
+						hx-target={ "#dev-" + dev.ID } hx-swap="outerHTML">∞</button>
+				}
 			}
 			<button class="btn btn-sm btn-ghost" style="color:var(--error-text)"
 				hx-delete={ "/devices/" + dev.ID }

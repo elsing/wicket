@@ -86,10 +86,11 @@ func (d *DB) GetLocalAdminByUsername(ctx context.Context, username string) (*Loc
 }
 
 // CreateLocalAdmin inserts a new local admin account with a bcrypt-hashed password.
+// If the username already exists, the password hash is updated (upsert).
 func (d *DB) CreateLocalAdmin(ctx context.Context, username, passwordHash string) error {
 	_, err := d.sql.ExecContext(ctx,
 		`INSERT INTO local_admins (id, username, password_hash, created_at) VALUES ($1, $2, $3, $4)
-		ON CONFLICT DO NOTHING`,
+		ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash`,
 		newID(), username, passwordHash, time.Now().UTC())
 	return err
 }
@@ -275,7 +276,7 @@ func (d *DB) RemoveAgentFromGroup(ctx context.Context, groupID, agentID string) 
 // GetGroupAgents returns all agents assigned to a group.
 func (d *DB) GetGroupAgents(ctx context.Context, groupID string) ([]*Agent, error) {
 	rows, err := d.sql.QueryContext(ctx, `
-		SELECT a.id, a.name, a.description, a.token, a.vpn_pool, a.endpoint, a.wg_public_key,
+		SELECT a.id, a.name, a.description, a.token, a.vpn_pool, a.endpoint, a.wg_public_key, a.wg_private_key,
 		       a.is_active, a.last_seen_at, a.created_at
 		FROM agents a
 		INNER JOIN group_agents ga ON ga.agent_id = a.id
@@ -289,7 +290,7 @@ func (d *DB) GetGroupAgents(ctx context.Context, groupID string) ([]*Agent, erro
 	for rows.Next() {
 		var a Agent
 		if err := rows.Scan(&a.ID, &a.Name, &a.Description, &a.TokenHash,
-			&a.VPNPool, &a.Endpoint, &a.WGPublicKey, &a.IsActive, &a.LastSeenAt, &a.CreatedAt); err != nil {
+			&a.VPNPool, &a.Endpoint, &a.WGPublicKey, &a.WGPrivateKey, &a.IsActive, &a.LastSeenAt, &a.CreatedAt); err != nil {
 			return nil, err
 		}
 		agents = append(agents, &a)
@@ -326,12 +327,12 @@ func (d *DB) UpdateAgentDetails(ctx context.Context, id, name, description, vpnP
 // GetAgentByID returns a single agent by ID.
 func (d *DB) GetAgentByID(ctx context.Context, id string) (*Agent, error) {
 	row := d.sql.QueryRowContext(ctx, `
-		SELECT id, name, description, token, vpn_pool, endpoint, wg_public_key,
+		SELECT id, name, description, token, vpn_pool, endpoint, wg_public_key, wg_private_key,
 		       is_active, last_seen_at, created_at
 		FROM agents WHERE id = $1`, id)
 	var a Agent
 	err := row.Scan(&a.ID, &a.Name, &a.Description, &a.TokenHash,
-		&a.VPNPool, &a.Endpoint, &a.WGPublicKey, &a.IsActive, &a.LastSeenAt, &a.CreatedAt)
+		&a.VPNPool, &a.Endpoint, &a.WGPublicKey, &a.WGPrivateKey, &a.IsActive, &a.LastSeenAt, &a.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -339,9 +340,19 @@ func (d *DB) GetAgentByID(ctx context.Context, id string) (*Agent, error) {
 }
 
 // UpdateAgentPublicKey stores the agent's WireGuard public key.
-// Called when the agent connects and sends its public key in the ready message.
+// Called when the agent connects and reports a key that differs from the stored one
+// (e.g. for agents created before server-side key generation was introduced).
 func (d *DB) UpdateAgentPublicKey(ctx context.Context, agentID, pubKey string) error {
 	_, err := d.sql.ExecContext(ctx,
 		`UPDATE agents SET wg_public_key = $1 WHERE id = $2`, pubKey, agentID)
+	return err
+}
+
+// UpdateAgentKeypair replaces both the private and public WireGuard keys for an agent.
+// Used by the key rotation CLI command. The agent will pick up the new key on next reconnect.
+func (d *DB) UpdateAgentKeypair(ctx context.Context, agentID, privKey, pubKey string) error {
+	_, err := d.sql.ExecContext(ctx,
+		`UPDATE agents SET wg_private_key = $1, wg_public_key = $2, updated_at = NOW() WHERE id = $3`,
+		privKey, pubKey, agentID)
 	return err
 }

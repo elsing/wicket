@@ -170,6 +170,7 @@ func (r *Reconciler) removeExpiredPeers(ctx context.Context) {
 		JOIN users u ON u.id = d.user_id
 		WHERE d.is_approved = TRUE
 		  AND d.is_active = TRUE
+		  AND d.always_connected = FALSE
 		  AND NOT EXISTS (
 		      SELECT 1 FROM sessions s
 		      WHERE s.device_id = d.id

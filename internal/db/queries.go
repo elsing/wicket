@@ -329,7 +329,7 @@ func (d *DB) ListDevicesByUser(ctx context.Context, userID string) ([]*Device, e
 func (d *DB) ListAllDevices(ctx context.Context) ([]*Device, error) {
 	rows, err := d.sql.QueryContext(ctx, `
 		SELECT d.id, d.user_id, d.group_id, d.name, d.public_key, d.assigned_ip,
-		       d.is_approved, d.is_active, d.auto_renew, d.config_downloaded,
+		       d.is_approved, d.is_active, d.auto_renew, d.always_connected, d.config_downloaded,
 		       d.created_at, d.updated_at, d.last_seen_at,
 		       u.email, u.display_name, g.name as group_name
 		FROM devices d
@@ -347,7 +347,7 @@ func (d *DB) ListAllDevices(ctx context.Context) ([]*Device, error) {
 		if err := rows.Scan(
 			&dev.ID, &dev.UserID, &dev.GroupID, &dev.Name,
 			&dev.PublicKey, &dev.AssignedIP,
-			&dev.IsApproved, &dev.IsActive, &dev.AutoRenew, &dev.ConfigDownloaded,
+			&dev.IsApproved, &dev.IsActive, &dev.AutoRenew, &dev.AlwaysConnected, &dev.ConfigDownloaded,
 			&dev.CreatedAt, &dev.UpdatedAt, &dev.LastSeenAt,
 			&userEmail, &userDisplay, &groupName,
 		); err != nil {
@@ -372,7 +372,7 @@ func (d *DB) ListAllDevicesRaw(ctx context.Context) ([]*Device, error) {
 func (d *DB) ListDevicesForGroup(ctx context.Context, groupID string) ([]*Device, error) {
 	rows, err := d.sql.QueryContext(ctx, `
 		SELECT d.id, d.user_id, d.group_id, d.name, d.public_key, d.assigned_ip,
-		       d.is_approved, d.is_active, d.auto_renew, d.config_downloaded,
+		       d.is_approved, d.is_active, d.auto_renew, d.always_connected, d.config_downloaded,
 		       d.created_at, d.updated_at, d.last_seen_at,
 		       u.email, u.display_name, g.name as group_name
 		FROM devices d
@@ -391,7 +391,7 @@ func (d *DB) ListDevicesForGroup(ctx context.Context, groupID string) ([]*Device
 		if err := rows.Scan(
 			&dev.ID, &dev.UserID, &dev.GroupID, &dev.Name,
 			&dev.PublicKey, &dev.AssignedIP,
-			&dev.IsApproved, &dev.IsActive, &dev.AutoRenew, &dev.ConfigDownloaded,
+			&dev.IsApproved, &dev.IsActive, &dev.AutoRenew, &dev.AlwaysConnected, &dev.ConfigDownloaded,
 			&dev.CreatedAt, &dev.UpdatedAt, &dev.LastSeenAt,
 			&userEmail, &userDisplay, &groupName,
 		); err != nil {
@@ -407,7 +407,7 @@ func (d *DB) ListDevicesForGroup(ctx context.Context, groupID string) ([]*Device
 func (d *DB) ListPendingDevices(ctx context.Context) ([]*Device, error) {
 	rows, err := d.sql.QueryContext(ctx, `
 		SELECT d.id, d.user_id, d.group_id, d.name, d.public_key, d.assigned_ip,
-		       d.is_approved, d.is_active, d.auto_renew, d.config_downloaded,
+		       d.is_approved, d.is_active, d.auto_renew, d.always_connected, d.config_downloaded,
 		       d.created_at, d.updated_at, d.last_seen_at,
 		       u.email, u.display_name, g.name as group_name
 		FROM devices d
@@ -425,7 +425,7 @@ func (d *DB) ListPendingDevices(ctx context.Context) ([]*Device, error) {
 		if err := rows.Scan(
 			&dev.ID, &dev.UserID, &dev.GroupID, &dev.Name,
 			&dev.PublicKey, &dev.AssignedIP,
-			&dev.IsApproved, &dev.IsActive, &dev.AutoRenew, &dev.ConfigDownloaded,
+			&dev.IsApproved, &dev.IsActive, &dev.AutoRenew, &dev.AlwaysConnected, &dev.ConfigDownloaded,
 			&dev.CreatedAt, &dev.UpdatedAt, &dev.LastSeenAt,
 			&userEmail, &userDisplay, &groupName,
 		); err != nil {
@@ -497,13 +497,18 @@ func (d *DB) SetDeviceAutoRenew(ctx context.Context, id string, autoRenew bool) 
 	return err
 }
 
+func (d *DB) SetDeviceAlwaysConnected(ctx context.Context, id string, alwaysConnected bool) error {
+	_, err := d.sql.ExecContext(ctx, `UPDATE devices SET always_connected = $1 WHERE id = $2`, alwaysConnected, id)
+	return err
+}
+
 func (d *DB) MarkConfigDownloaded(ctx context.Context, id string) error {
 	_, err := d.sql.ExecContext(ctx, `UPDATE devices SET config_downloaded = TRUE WHERE id = $1`, id)
 	return err
 }
 
 const deviceSelectSQL = `SELECT id, user_id, group_id, name, public_key, assigned_ip,
-	is_approved, is_active, auto_renew, config_downloaded,
+	is_approved, is_active, auto_renew, always_connected, config_downloaded,
 	created_at, updated_at, last_seen_at FROM devices`
 
 func scanDevice(row *sql.Row) (*Device, error) {
@@ -511,7 +516,7 @@ func scanDevice(row *sql.Row) (*Device, error) {
 	err := row.Scan(
 		&dev.ID, &dev.UserID, &dev.GroupID, &dev.Name,
 		&dev.PublicKey, &dev.AssignedIP,
-		&dev.IsApproved, &dev.IsActive, &dev.AutoRenew, &dev.ConfigDownloaded,
+		&dev.IsApproved, &dev.IsActive, &dev.AutoRenew, &dev.AlwaysConnected, &dev.ConfigDownloaded,
 		&dev.CreatedAt, &dev.UpdatedAt, &dev.LastSeenAt,
 	)
 	if err != nil {
@@ -527,7 +532,7 @@ func scanDevices(rows *sql.Rows) ([]*Device, error) {
 		if err := rows.Scan(
 			&dev.ID, &dev.UserID, &dev.GroupID, &dev.Name,
 			&dev.PublicKey, &dev.AssignedIP,
-			&dev.IsApproved, &dev.IsActive, &dev.AutoRenew, &dev.ConfigDownloaded,
+			&dev.IsApproved, &dev.IsActive, &dev.AutoRenew, &dev.AlwaysConnected, &dev.ConfigDownloaded,
 			&dev.CreatedAt, &dev.UpdatedAt, &dev.LastSeenAt,
 		); err != nil {
 			return nil, err
@@ -609,7 +614,11 @@ func (d *DB) RevokeSession(ctx context.Context, id, revokedBy string) error {
 func (d *DB) MarkExpiredSessions(ctx context.Context) (int64, error) {
 	result, err := d.sql.ExecContext(ctx, `
 		UPDATE sessions SET status = 'expired'
-		WHERE status = 'active' AND expires_at <= $1
+		WHERE status = 'active'
+		  AND expires_at <= $1
+		  AND device_id NOT IN (
+		      SELECT id FROM devices WHERE always_connected = TRUE
+		  )
 	`, time.Now().UTC())
 	if err != nil {
 		return 0, err
@@ -674,7 +683,7 @@ func scanSession(row *sql.Row) (*Session, error) {
 
 func (d *DB) ListAgents(ctx context.Context) ([]*Agent, error) {
 	rows, err := d.sql.QueryContext(ctx,
-		`SELECT id, name, description, token, vpn_pool, endpoint, wg_public_key,
+		`SELECT id, name, description, token, vpn_pool, endpoint, wg_public_key, wg_private_key,
 		        is_active, last_seen_at, created_at
 		 FROM agents ORDER BY name`)
 	if err != nil {
@@ -686,7 +695,7 @@ func (d *DB) ListAgents(ctx context.Context) ([]*Agent, error) {
 		var a Agent
 		if err := rows.Scan(
 			&a.ID, &a.Name, &a.Description, &a.TokenHash,
-			&a.VPNPool, &a.Endpoint, &a.WGPublicKey,
+			&a.VPNPool, &a.Endpoint, &a.WGPublicKey, &a.WGPrivateKey,
 			&a.IsActive, &a.LastSeenAt, &a.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -696,14 +705,15 @@ func (d *DB) ListAgents(ctx context.Context) ([]*Agent, error) {
 	return agents, rows.Err()
 }
 
-func (d *DB) CreateAgent(ctx context.Context, name, description, tokenHash, vpnPool, endpoint string) (*Agent, error) {
+func (d *DB) CreateAgent(ctx context.Context, name, description, tokenHash, vpnPool, endpoint, wgPublicKey, wgPrivateKey string) (*Agent, error) {
 	id := newID()
 	now := time.Now().UTC()
+
 	_, err := d.sql.ExecContext(ctx,
-		`INSERT INTO agents (id, name, description, token, vpn_pool, endpoint, is_active, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, TRUE, $7)
+		`INSERT INTO agents (id, name, description, token, vpn_pool, endpoint, wg_public_key, wg_private_key, is_active, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE, $9)
 		ON CONFLICT DO NOTHING`,
-		id, name, description, tokenHash, vpnPool, endpoint, now,
+		id, name, description, tokenHash, vpnPool, endpoint, wgPublicKey, wgPrivateKey, now,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("creating agent: %w", err)
@@ -719,7 +729,7 @@ func (d *DB) TouchAgentSeen(ctx context.Context, id string) error {
 
 func (d *DB) GetActiveAgents(ctx context.Context) ([]*Agent, error) {
 	rows, err := d.sql.QueryContext(ctx,
-		`SELECT id, name, description, token, vpn_pool, endpoint, wg_public_key,
+		`SELECT id, name, description, token, vpn_pool, endpoint, wg_public_key, wg_private_key,
 		        is_active, last_seen_at, created_at
 		 FROM agents WHERE is_active = TRUE`)
 	if err != nil {
@@ -731,7 +741,7 @@ func (d *DB) GetActiveAgents(ctx context.Context) ([]*Agent, error) {
 		var a Agent
 		if err := rows.Scan(
 			&a.ID, &a.Name, &a.Description, &a.TokenHash,
-			&a.VPNPool, &a.Endpoint, &a.WGPublicKey,
+			&a.VPNPool, &a.Endpoint, &a.WGPublicKey, &a.WGPrivateKey,
 			&a.IsActive, &a.LastSeenAt, &a.CreatedAt,
 		); err != nil {
 			return nil, err

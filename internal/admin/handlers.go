@@ -136,6 +136,7 @@ func NewHandler(
 		r.Post("/devices/{deviceID}/reject", h.handleRejectDevice)
 		r.Post("/devices/{deviceID}/disable", h.handleDisableDevice)
 		r.Post("/devices/{deviceID}/enable", h.handleEnableDevice)
+		r.Post("/devices/{deviceID}/always-connected", h.handleSetAlwaysConnected)
 		r.Delete("/devices/{deviceID}", h.handleDeleteDevice)
 		r.Put("/devices/{deviceID}/name", h.handleRenameDevice)
 
@@ -397,6 +398,22 @@ func (h *Handler) handleEnableDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.svc.WriteAuditLog(r.Context(), deviceID, sess.UserID, "device.enabled", clientIP(r))
+	h.renderDeviceRow(w, r, deviceID)
+}
+
+func (h *Handler) handleSetAlwaysConnected(w http.ResponseWriter, r *http.Request) {
+	sess := portal.SessionFromContext(r.Context())
+	deviceID := chi.URLParam(r, "deviceID")
+	enabled := r.FormValue("always_connected") == "true"
+	if err := h.svc.SetDeviceAlwaysConnected(r.Context(), deviceID, enabled); err != nil {
+		h.serverError(w, "internal error", err)
+		return
+	}
+	action := "device.always_connected.disabled"
+	if enabled {
+		action = "device.always_connected.enabled"
+	}
+	h.svc.WriteAuditLog(r.Context(), deviceID, sess.UserID, action, clientIP(r))
 	h.renderDeviceRow(w, r, deviceID)
 }
 
@@ -819,7 +836,13 @@ func (h *Handler) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	agent, err := h.svc.DB().CreateAgent(r.Context(), name, r.FormValue("description"), hash, r.FormValue("vpn_pool"), r.FormValue("endpoint"))
+	wgPrivKey, wgPubKey, err := h.svc.GenerateAgentKeypair()
+	if err != nil {
+		h.log.Error("generating agent WireGuard keypair", zap.Error(err))
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	agent, err := h.svc.DB().CreateAgent(r.Context(), name, r.FormValue("description"), hash, r.FormValue("vpn_pool"), r.FormValue("endpoint"), wgPubKey, wgPrivKey)
 	if err != nil {
 		if isUniqueViolation(err) {
 			formError(w, "agent-form-error", "An agent named "+name+" already exists.")

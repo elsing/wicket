@@ -213,7 +213,7 @@ func (h *Handler) handleAgentConnect(w http.ResponseWriter, r *http.Request) {
 		h.svc.DB(),
 		agentRecord.ID,
 		agentRecord.VPNPool,
-		"",
+		agentRecord.WGPrivateKey,
 		h.svc.Config().WireGuard.ListenPort,
 	)
 	if err != nil {

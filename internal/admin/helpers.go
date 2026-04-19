@@ -63,23 +63,33 @@ func groupHasRoute(groupID, routeID string, groupRoutes map[string][]string) boo
 	return false
 }
 
+// alwaysConnectedVal returns the HTMX hx-vals JSON for the always-connected toggle.
+func alwaysConnectedVal(val bool) string {
+	if val {
+		return `{"always_connected":"true"}`
+	}
+	return `{"always_connected":"false"}`
+}
+
 // humanEvent converts an event key like "device.approved" to "Device Approved".
 func humanEvent(event string) string {
 	m := map[string]string{
-		"device.created":   "Device Created",
-		"device.approved":  "Device Approved",
-		"device.rejected":  "Device Rejected",
-		"device.disabled":  "Device Disabled",
-		"device.enabled":   "Device Enabled",
-		"session.created":  "Session Started",
-		"session.extended": "Session Extended",
-		"session.revoked":  "Session Revoked",
-		"session.expired":  "Session Expired",
-		"peer.added":       "Peer Added",
-		"peer.removed":     "Peer Removed",
-		"user.login":       "User Login",
-		"user.admin.grant": "Admin Granted",
-		"device.deleted":   "Device Deleted",
+		"device.created":                "Device Created",
+		"device.approved":               "Device Approved",
+		"device.rejected":               "Device Rejected",
+		"device.disabled":               "Device Disabled",
+		"device.enabled":                "Device Enabled",
+		"device.always_connected.enabled":  "Always Connected On",
+		"device.always_connected.disabled": "Always Connected Off",
+		"session.created":               "Session Started",
+		"session.extended":              "Session Extended",
+		"session.revoked":               "Session Revoked",
+		"session.expired":               "Session Expired",
+		"peer.added":                    "Peer Added",
+		"peer.removed":                  "Peer Removed",
+		"user.login":                    "User Login",
+		"user.admin.grant":              "Admin Granted",
+		"device.deleted":                "Device Deleted",
 	}
 	if h, ok := m[event]; ok {
 		return h
