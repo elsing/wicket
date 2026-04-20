@@ -188,7 +188,17 @@ func (h *Handler) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleSSO(w http.ResponseWriter, r *http.Request) {
-	authURL, state, err := h.oidc.BeginAuth()
+	scheme := "https"
+	if r.TLS == nil && r.Header.Get("X-Forwarded-Proto") != "https" {
+		scheme = "http"
+	}
+	host := r.Host
+	if fwdHost := r.Header.Get("X-Forwarded-Host"); fwdHost != "" {
+		host = fwdHost
+	}
+	callbackURL := scheme + "://" + host + "/auth/callback"
+
+	authURL, state, err := h.oidc.BeginAuth(callbackURL)
 	if err != nil {
 		h.log.Error("admin: beginning OIDC auth", zap.Error(err))
 		http.Error(w, "authentication unavailable", http.StatusInternalServerError)
@@ -227,7 +237,6 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request) {
 
 	claims, err := h.oidc.CompleteAuth(r.Context(), r, stateCookie.Value)
 	if err != nil {
-		// Stale auth code (server restarted, back button, etc) — restart flow.
 		h.log.Warn("admin: OIDC auth failed — restarting flow", zap.Error(err))
 		http.Redirect(w, r, "/auth/login", http.StatusFound)
 		return

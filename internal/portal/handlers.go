@@ -238,7 +238,17 @@ func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
-	authURL, state, err := h.oidc.BeginAuth()
+	scheme := "https"
+	if r.TLS == nil && r.Header.Get("X-Forwarded-Proto") != "https" {
+		scheme = "http"
+	}
+	host := r.Host
+	if fwdHost := r.Header.Get("X-Forwarded-Host"); fwdHost != "" {
+		host = fwdHost
+	}
+	callbackURL := scheme + "://" + host + "/auth/callback"
+
+	authURL, state, err := h.oidc.BeginAuth(callbackURL)
 	if err != nil {
 		h.log.Error("beginning OIDC auth", zap.Error(err))
 		http.Error(w, "authentication unavailable", http.StatusInternalServerError)
@@ -257,8 +267,6 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 	})
 
-	// Preserve the next= redirect destination through the OIDC round-trip via a cookie.
-	// Only accept relative paths (must start with "/" but not "//") to prevent open redirects.
 	if next := r.URL.Query().Get("next"); next != "" && strings.HasPrefix(next, "/") && !strings.HasPrefix(next, "//") {
 		http.SetCookie(w, &http.Cookie{
 			Name:     "wicket_next",
@@ -275,7 +283,6 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request) {
-	// Always clear the state cookie — whether we succeed or fail.
 	clearStateCookie := func() {
 		http.SetCookie(w, &http.Cookie{
 			Name: oidcStateCookie, Value: "", Path: "/auth", MaxAge: -1,
@@ -284,7 +291,6 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request) {
 
 	stateCookie, err := r.Cookie(oidcStateCookie)
 	if err != nil {
-		// No state cookie — stale tab or direct navigation. Restart the flow.
 		h.log.Debug("OIDC callback: no state cookie, restarting flow")
 		clearStateCookie()
 		http.Redirect(w, r, "/auth/login", http.StatusFound)
@@ -294,8 +300,6 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request) {
 
 	claims, err := h.oidc.CompleteAuth(r.Context(), r, stateCookie.Value)
 	if err != nil {
-		// invalid_grant usually means a stale auth code (server restarted, or
-		// user clicked back and tried again). Restart the flow cleanly.
 		h.log.Warn("OIDC callback: auth failed — restarting flow", zap.Error(err))
 		http.Redirect(w, r, "/auth/login", http.StatusFound)
 		return

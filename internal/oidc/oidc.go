@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	gooidc "github.com/coreos/go-oidc/v3/oidc"
@@ -73,13 +74,27 @@ func New(ctx context.Context, cfg *config.OIDCConfig, redirectURL string) (*Prov
 // BeginAuth returns the URL to redirect the user to for authentication,
 // along with a random state token that must be stored (e.g. in a short-lived
 // cookie) and verified in the callback to prevent CSRF.
-func (p *Provider) BeginAuth() (authURL, state string, err error) {
-	state, err = generateState()
+// redirectURL overrides the configured redirect URL if non-empty — use this
+// to support multiple hostnames (e.g. VPN access vs Pangolin proxy).
+// The redirectURL is encoded into the state parameter so it round-trips
+// through the IdP without needing an extra cookie.
+func (p *Provider) BeginAuth(redirectURL string) (authURL, state string, err error) {
+	nonce, err := generateState()
 	if err != nil {
 		return "", "", fmt.Errorf("generating OIDC state: %w", err)
 	}
 
-	authURL = p.oauthConfig.AuthCodeURL(
+	cfg := p.oauthConfig
+	if redirectURL != "" {
+		cfg.RedirectURL = redirectURL
+		// Encode the callback URL into the state so CompleteAuth can recover it.
+		// Format: "<nonce>:<base64url(redirectURL)>"
+		state = nonce + ":" + base64.RawURLEncoding.EncodeToString([]byte(redirectURL))
+	} else {
+		state = nonce
+	}
+
+	authURL = cfg.AuthCodeURL(
 		state,
 		oauth2.AccessTypeOnline,
 	)
@@ -97,6 +112,7 @@ func (p *Provider) BeginAuth() (authURL, state string, err error) {
 //  5. Extracts and validates user claims
 //
 // expectedState must match the value stored when BeginAuth was called.
+// The redirect URL is recovered from the state parameter automatically.
 func (p *Provider) CompleteAuth(ctx context.Context, r *http.Request, expectedState string) (*Claims, error) {
 	// 1. State validation — prevents CSRF on the callback.
 	state := r.URL.Query().Get("state")
@@ -124,7 +140,15 @@ func (p *Provider) CompleteAuth(ctx context.Context, r *http.Request, expectedSt
 	exchangeCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	token, err := p.oauthConfig.Exchange(exchangeCtx, code)
+	// Recover the redirect URL encoded in the state parameter ("<nonce>:<base64url(url)>").
+	cfg := p.oauthConfig
+	if idx := strings.Index(state, ":"); idx != -1 {
+		if decoded, err := base64.RawURLEncoding.DecodeString(state[idx+1:]); err == nil {
+			cfg.RedirectURL = string(decoded)
+		}
+	}
+
+	token, err := cfg.Exchange(exchangeCtx, code)
 	if err != nil {
 		return nil, fmt.Errorf("oidc: exchanging auth code: %w", err)
 	}
