@@ -148,9 +148,20 @@ func (h *Hub) HandleConnect(w http.ResponseWriter, r *http.Request, agentID stri
 	// Touch last_seen in DB
 	_ = h.db.TouchAgentSeen(r.Context(), agentID)
 
-	// Send full sync immediately, then request stats so metrics are fresh on connect.
+	// Send full sync immediately, then request stats twice:
+	// once immediately (picks up any existing peers) and once after a short
+	// delay to catch handshakes that complete just after the sync is applied.
 	ca.send <- Envelope{Type: MsgSync, MsgID: newMsgID(), Payload: syncPayload}
 	ca.send <- Envelope{Type: MsgRequestStats, MsgID: newMsgID()}
+	go func() {
+		time.Sleep(8 * time.Second)
+		h.mu.RLock()
+		_, still := h.agents[agentID]
+		h.mu.RUnlock()
+		if still {
+			ca.send <- Envelope{Type: MsgRequestStats, MsgID: newMsgID()}
+		}
+	}()
 
 	defer func() {
 		h.mu.Lock()

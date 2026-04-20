@@ -268,7 +268,7 @@ window.renderMetricsChart = function(deviceID, containerID) {
     legend.setAttribute('y', '10');
     legend.setAttribute('font-size', '9');
     legend.setAttribute('fill', 'var(--text-3)');
-    legend.textContent = `↑ ${fmtRate(Math.max(...points.map(p=>p.bytes_sent||0)))} ↓ ${fmtRate(Math.max(...points.map(p=>p.bytes_received||0)))} peak`;
+    legend.textContent = `↑ ${fmtBytes(Math.max(...points.map(p=>p.bytes_sent||0)))} ↓ ${fmtBytes(Math.max(...points.map(p=>p.bytes_received||0)))} peak`;
     svg.appendChild(legend);
 
     el.innerHTML = '';
@@ -280,6 +280,13 @@ function fmtRate(bps) {
   if (bps < 1024) return `${bps.toFixed(0)}B/s`;
   if (bps < 1024*1024) return `${(bps/1024).toFixed(1)}K/s`;
   return `${(bps/1024/1024).toFixed(1)}M/s`;
+}
+
+function fmtBytes(b) {
+  if (b < 1024) return `${b.toFixed(0)}B`;
+  if (b < 1024*1024) return `${(b/1024).toFixed(1)}KB`;
+  if (b < 1024*1024*1024) return `${(b/1024/1024).toFixed(1)}MB`;
+  return `${(b/1024/1024/1024).toFixed(2)}GB`;
 }
 
 // ── Group edit toggle ─────────────────────────────────────────────────────────
@@ -339,8 +346,12 @@ window.showAdminToast = function(message, type = 'info') {
 function showToast(msg, type) { window.showAdminToast(msg, type); }
 
 function initCharts() {
+  // Only render charts that haven't been populated yet — avoid re-fetching
+  // 7 days of history on every 30s table refresh.
   document.querySelectorAll('.metrics-chart').forEach(el => {
-    if (el.dataset.deviceId) window.renderMetricsChart(el.dataset.deviceId, el.id);
+    if (el.dataset.deviceId && el.children.length === 0) {
+      window.renderMetricsChart(el.dataset.deviceId, el.id);
+    }
   });
 }
 
@@ -350,10 +361,21 @@ function refreshMetrics() {
     .then(r => r.text())
     .then(html => {
       const el = document.getElementById('metrics-content');
-      if (el) {
-        el.innerHTML = html;
-        initCharts();
-      }
+      if (!el || !html.trim()) return; // never blank out existing content
+      // Preserve chart SVG content across the table refresh by stashing it,
+      // swapping the HTML, then restoring — avoids re-fetching chart data.
+      const charts = {};
+      el.querySelectorAll('.metrics-chart[id]').forEach(c => {
+        if (c.innerHTML.trim()) charts[c.id] = c.innerHTML;
+      });
+      el.innerHTML = html;
+      el.querySelectorAll('.metrics-chart[id]').forEach(c => {
+        if (charts[c.id]) {
+          c.innerHTML = charts[c.id]; // restore existing chart
+        } else if (c.dataset.deviceId) {
+          window.renderMetricsChart(c.dataset.deviceId, c.id); // new device, fetch
+        }
+      });
     })
     .catch(() => {});
 }
@@ -372,9 +394,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
 document.body.addEventListener('htmx:afterSwap', () => {
   connectWS();
-  initCharts();
   // Start/stop metrics polling based on whether we are on the metrics page
   if (document.getElementById('metrics-content')) {
+    initCharts(); // fetch charts for newly loaded page
     if (!window._metricsInterval)
       window._metricsInterval = setInterval(refreshMetrics, 30000);
   } else {

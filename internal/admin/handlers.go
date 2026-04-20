@@ -9,6 +9,7 @@ import (
 	"html"
 	"net"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -944,34 +945,63 @@ func (h *Handler) handleDeviceMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Convert cumulative byte counters to per-interval deltas.
-	// WireGuard reports total bytes since peer was added, not a rate.
-	// Deltas give meaningful sparklines showing when traffic occurred.
 	type point struct {
 		Time          string  `json:"t"`
 		BytesSent     float64 `json:"bytes_sent"`
 		BytesReceived float64 `json:"bytes_received"`
 	}
-	points := make([]point, 0, len(snaps))
+
+	if len(snaps) < 2 {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]point{}) //nolint:errcheck
+		return
+	}
+
+	// Bucket snapshots into 1-hour intervals and sum the deltas within each bucket.
+	// This gives a readable chart over 7 days (168 points max) rather than 20k raw samples.
+	// Counter resets (negative deltas) are treated as zero — happens when peer is re-added.
+	type bucket struct {
+		sent float64
+		recv float64
+		hour time.Time
+	}
+	buckets := make(map[int64]*bucket)
 	for i := 1; i < len(snaps); i++ {
 		prev, cur := snaps[i-1], snaps[i]
 		dt := cur.RecordedAt.Sub(prev.RecordedAt).Seconds()
-		if dt <= 0 {
-			dt = 30
+		if dt <= 0 || dt > 300 {
+			// Gap > 5 min means peer was offline — skip to avoid false spike.
+			continue
 		}
-		// Rate in bytes/sec. Guard against counter resets (negative deltas).
-		sent := float64(cur.BytesSent-prev.BytesSent) / dt
-		recv := float64(cur.BytesReceived-prev.BytesReceived) / dt
-		if sent < 0 {
-			sent = 0
+		sent := float64(cur.BytesSent - prev.BytesSent)
+		recv := float64(cur.BytesReceived - prev.BytesReceived)
+		if sent < 0 { sent = 0 }
+		if recv < 0 { recv = 0 }
+
+		// Key by hour
+		hr := cur.RecordedAt.Truncate(time.Hour)
+		key := hr.Unix()
+		if buckets[key] == nil {
+			buckets[key] = &bucket{hour: hr}
 		}
-		if recv < 0 {
-			recv = 0
-		}
+		buckets[key].sent += sent
+		buckets[key].recv += recv
+	}
+
+	// Sort bucket keys and emit points
+	keys := make([]int64, 0, len(buckets))
+	for k := range buckets {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+
+	points := make([]point, 0, len(keys))
+	for _, k := range keys {
+		b := buckets[k]
 		points = append(points, point{
-			Time:          cur.RecordedAt.Format("15:04"),
-			BytesSent:     sent,
-			BytesReceived: recv,
+			Time:          b.hour.Format("Jan 2 15:00"),
+			BytesSent:     b.sent,
+			BytesReceived: b.recv,
 		})
 	}
 
