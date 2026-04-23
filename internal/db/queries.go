@@ -576,13 +576,22 @@ func (d *DB) GetSessionByID(ctx context.Context, id string) (*Session, error) {
 func (d *DB) CreateSession(ctx context.Context, deviceID string, expiresAt time.Time, ipAddress string) (*Session, error) {
 	id := newID()
 	now := time.Now().UTC()
-	_, err := d.sql.ExecContext(ctx, `
+	result, err := d.sql.ExecContext(ctx, `
 		INSERT INTO sessions (id, device_id, authed_at, expires_at, ip_address, status)
 		VALUES ($1, $2, $3, $4, $5, 'active')
 		ON CONFLICT DO NOTHING
 	`, id, deviceID, now, expiresAt, ipAddress)
 	if err != nil {
 		return nil, fmt.Errorf("creating session: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		// ON CONFLICT DO NOTHING — a session already exists, return the existing one.
+		existing, err := d.GetActiveSessionForDevice(context.Background(), deviceID)
+		if err != nil {
+			return nil, fmt.Errorf("creating session: conflict but no active session found: %w", err)
+		}
+		return existing, nil
 	}
 	return d.GetSessionByID(ctx, id)
 }
