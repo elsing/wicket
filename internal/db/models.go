@@ -70,15 +70,15 @@ type DeviceRoute struct {
 // User represents a person who has logged in via OIDC.
 // Created automatically on first login.
 type User struct {
-	ID          string       `db:"id"`
-	OIDCSub     string       `db:"oidc_sub"` // stable OIDC subject — primary identifier
-	Email       string       `db:"email"`
-	DisplayName string       `db:"display_name"`
-	IsAdmin     bool         `db:"is_admin"`
-	IsActive    bool         `db:"is_active"`
-	CreatedAt   time.Time    `db:"created_at"`
-	UpdatedAt   time.Time    `db:"updated_at"`
-	LastLoginAt sql.NullTime `db:"last_login_at"`
+	ID          string       `db:"id"            json:"id"`
+	OIDCSub     string       `db:"oidc_sub"      json:"oidc_sub"` // stable OIDC subject — primary identifier
+	Email       string       `db:"email"         json:"email"`
+	DisplayName string       `db:"display_name"  json:"display_name"`
+	IsAdmin     bool         `db:"is_admin"      json:"is_admin"`
+	IsActive    bool         `db:"is_active"     json:"is_active"`
+	CreatedAt   time.Time    `db:"created_at"    json:"created_at"`
+	UpdatedAt   time.Time    `db:"updated_at"    json:"updated_at"`
+	LastLoginAt sql.NullTime `db:"last_login_at" json:"last_login_at"`
 
 	// Populated by joins.
 	Groups  []Group  `db:"-"`

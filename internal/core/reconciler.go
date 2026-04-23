@@ -137,6 +137,7 @@ func (r *Reconciler) pass() {
 
 	r.markExpiredSessions(ctx)
 	r.removeExpiredPeers(ctx)
+	r.restoreAlwaysConnectedSessions(ctx)
 	r.ensureActivePeers(ctx)
 	r.sampleMetrics(ctx)
 	r.pruneMetrics(ctx)
@@ -252,6 +253,39 @@ func (r *Reconciler) removeExpiredPeers(ctx context.Context) {
 			r.log.Warn("reconciler: removing expired peer from local WG",
 				zap.String("device", p.deviceID),
 				zap.Error(err),
+			)
+		}
+	}
+}
+
+// restoreAlwaysConnectedSessions ensures always-connected devices always have
+// an active session. Called on every reconciler pass so recovery is automatic
+// after reboots, session revocation, or any other disruption.
+func (r *Reconciler) restoreAlwaysConnectedSessions(ctx context.Context) {
+	devices, err := r.db.ListAlwaysConnectedDevices(ctx)
+	if err != nil {
+		r.log.Error("reconciler: listing always-connected devices", zap.Error(err))
+		return
+	}
+
+	for _, dev := range devices {
+		if !dev.IsApproved || !dev.IsActive {
+			continue
+		}
+		// Check if there's already an active session.
+		session, err := r.db.GetActiveSessionForDevice(ctx, dev.ID)
+		if err == nil && session != nil {
+			continue // already active, nothing to do
+		}
+		// No active session — re-activate.
+		if _, err := r.svc.ActivateSession(ctx, dev.ID, dev.UserID, "system"); err != nil {
+			r.log.Warn("reconciler: restoring always-connected session",
+				zap.String("device", dev.Name),
+				zap.Error(err),
+			)
+		} else {
+			r.log.Info("reconciler: restored always-connected session",
+				zap.String("device", dev.Name),
 			)
 		}
 	}

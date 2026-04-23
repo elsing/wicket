@@ -284,12 +284,43 @@ var healthCmd = &cobra.Command{
 // init — wire everything up
 // ─────────────────────────────────────────────────────────────────────────────
 
+var (
+	sessionCreateDeviceID string
+	sessionCreateDuration string
+)
+
+var sessionCreateCmd = &cobra.Command{
+	Use:   "create",
+	Short: "Create a new session for a device",
+	Long:  "Creates an active VPN session for a device. Use 'wicket device list' to find the device ID.",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if sessionCreateDeviceID == "" {
+			return fmt.Errorf("--device is required")
+		}
+		payload := map[string]string{"device_id": sessionCreateDeviceID}
+		if sessionCreateDuration != "" {
+			payload["duration"] = sessionCreateDuration
+		}
+		resp, err := sendCommand("session.create", payload)
+		if err != nil {
+			return err
+		}
+		mustOK(resp)
+		fmt.Printf("✓ Session created for device %s.\n", sessionCreateDeviceID)
+		return nil
+	},
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 func init() {
 	// session subcommands
 	sessionRevokeCmd.Flags().StringVar(&sessionRevokeID, "id", "", "session ID to revoke")
 	sessionExtendCmd.Flags().StringVar(&sessionExtendID, "id", "", "session ID to extend")
 	sessionExtendCmd.Flags().StringVar(&sessionExtendDuration, "duration", "24h", "how long to extend by (e.g. 24h, 12h)")
-	sessionCmd.AddCommand(sessionListCmd, sessionRevokeCmd, sessionExtendCmd)
+	sessionCreateCmd.Flags().StringVar(&sessionCreateDeviceID, "device", "", "device ID to create a session for")
+	sessionCreateCmd.Flags().StringVar(&sessionCreateDuration, "duration", "", "optional duration override (e.g. 24h)")
+	sessionCmd.AddCommand(sessionListCmd, sessionRevokeCmd, sessionExtendCmd, sessionCreateCmd)
 
 	// device subcommands
 	deviceListCmd.Flags().BoolVar(&deviceListPending, "pending", false, "show only pending devices")

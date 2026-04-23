@@ -76,6 +76,48 @@ func dispatchSocketCommand(conn net.Conn, svc *Service, log *zap.Logger) {
 		}
 		respond(SocketResponse{OK: true, Data: "session revoked"})
 
+	case "session.create":
+		var p struct {
+			DeviceID string `json:"device_id"`
+			Duration string `json:"duration,omitempty"` // optional override, e.g. "24h"
+		}
+		if err := json.Unmarshal(req.Payload, &p); err != nil {
+			respond(SocketResponse{OK: false, Error: "invalid payload: " + err.Error()})
+			return
+		}
+		if p.DeviceID == "" {
+			respond(SocketResponse{OK: false, Error: "device_id is required"})
+			return
+		}
+		dev, err := svc.db.GetDeviceByID(ctx, p.DeviceID)
+		if err != nil {
+			respond(SocketResponse{OK: false, Error: "device not found: " + p.DeviceID})
+			return
+		}
+		if !dev.IsApproved || !dev.IsActive {
+			respond(SocketResponse{OK: false, Error: "device is not approved or active"})
+			return
+		}
+		session, err := svc.ActivateSession(ctx, p.DeviceID, dev.UserID, "cli")
+		if err != nil {
+			respond(SocketResponse{OK: false, Error: err.Error()})
+			return
+		}
+		// Optional duration override — extend immediately after creation.
+		if p.Duration != "" {
+			d, err := time.ParseDuration(p.Duration)
+			if err != nil {
+				respond(SocketResponse{OK: false, Error: "invalid duration: " + err.Error()})
+				return
+			}
+			session, err = svc.AdminExtendSession(ctx, session.ID, "cli", "127.0.0.1", d)
+			if err != nil {
+				respond(SocketResponse{OK: false, Error: "session created but extend failed: " + err.Error()})
+				return
+			}
+		}
+		respond(SocketResponse{OK: true, Data: session})
+
 	case "session.extend":
 		var p struct {
 			SessionID string `json:"session_id"`

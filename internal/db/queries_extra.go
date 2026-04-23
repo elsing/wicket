@@ -356,3 +356,14 @@ func (d *DB) UpdateAgentKeypair(ctx context.Context, agentID, privKey, pubKey st
 		privKey, pubKey, agentID)
 	return err
 }
+
+// ListAlwaysConnectedDevices returns all approved, active devices with always_connected = true.
+func (d *DB) ListAlwaysConnectedDevices(ctx context.Context) ([]*Device, error) {
+	rows, err := d.sql.QueryContext(ctx,
+		deviceSelectSQL+` WHERE always_connected = TRUE AND is_approved = TRUE AND is_active = TRUE`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanDevices(rows)
+}
