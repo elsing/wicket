@@ -259,8 +259,8 @@ func (r *Reconciler) removeExpiredPeers(ctx context.Context) {
 }
 
 // restoreAlwaysConnectedSessions ensures always-connected devices always have
-// an active session. Called on every reconciler pass so recovery is automatic
-// after reboots, session revocation, or any other disruption.
+// a valid active session. Called on every reconciler pass so recovery after
+// reboots, revocations, or expiry is automatic within one interval.
 func (r *Reconciler) restoreAlwaysConnectedSessions(ctx context.Context) {
 	devices, err := r.db.ListAlwaysConnectedDevices(ctx)
 	if err != nil {
@@ -272,21 +272,31 @@ func (r *Reconciler) restoreAlwaysConnectedSessions(ctx context.Context) {
 		if !dev.IsApproved || !dev.IsActive {
 			continue
 		}
-		// Check if there's already an active session.
-		session, err := r.db.GetActiveSessionForDevice(ctx, dev.ID)
-		if err == nil && session != nil {
-			continue // already active, nothing to do
+
+		// Check for a valid active session (not expired).
+		existing, err := r.db.GetActiveSessionForDevice(ctx, dev.ID)
+		if err == nil && existing != nil {
+			continue // healthy, nothing to do
 		}
-		// No active session — re-activate.
+
+		// No valid session — clean up any stale 'active' rows that would block
+		// INSERT (the partial unique index only allows one active row per device).
+		if _, err := r.db.SQL().ExecContext(ctx, `
+			UPDATE sessions SET status = 'expired'
+			WHERE device_id = $1 AND status = 'active'
+		`, dev.ID); err != nil {
+			r.log.Warn("reconciler: clearing stale session for always-connected device",
+				zap.String("device", dev.Name), zap.Error(err))
+			continue
+		}
+
+		// Now safe to create a fresh session.
 		if _, err := r.svc.ActivateSession(ctx, dev.ID, dev.UserID, "system"); err != nil {
 			r.log.Warn("reconciler: restoring always-connected session",
-				zap.String("device", dev.Name),
-				zap.Error(err),
-			)
+				zap.String("device", dev.Name), zap.Error(err))
 		} else {
 			r.log.Info("reconciler: restored always-connected session",
-				zap.String("device", dev.Name),
-			)
+				zap.String("device", dev.Name))
 		}
 	}
 }

@@ -754,7 +754,7 @@ func (s *Service) SetDeviceAutoRenew(ctx context.Context, deviceID, userID strin
 // SetDeviceAlwaysConnected sets the always_connected flag on a device (admin only).
 // Always-connected devices maintain an active session indefinitely and are never
 // evicted by the reconciler — useful for servers and infrastructure devices.
-// If enabling, an active session is created immediately if one doesn't exist.
+// If enabling, any stale active sessions are cleared and a fresh one created.
 func (s *Service) SetDeviceAlwaysConnected(ctx context.Context, deviceID string, enabled bool) error {
 	if err := s.db.SetDeviceAlwaysConnected(ctx, deviceID, enabled); err != nil {
 		return err
@@ -765,6 +765,12 @@ func (s *Service) SetDeviceAlwaysConnected(ctx context.Context, deviceID string,
 			return err
 		}
 		if dev.IsApproved && dev.IsActive {
+			// Clear any stale active sessions that could block the INSERT.
+			if _, err := s.db.SQL().ExecContext(ctx,
+				`UPDATE sessions SET status = 'expired' WHERE device_id = $1 AND status = 'active'`,
+				deviceID); err != nil {
+				s.log.Warn("always-connected: clearing stale session", zap.Error(err))
+			}
 			if _, err := s.ActivateSession(ctx, deviceID, dev.UserID, "system"); err != nil {
 				s.log.Warn("always-connected: activating session on enable",
 					zap.String("device", deviceID), zap.Error(err))

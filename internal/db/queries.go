@@ -630,11 +630,7 @@ func (d *DB) RevokeSession(ctx context.Context, id, revokedBy string) error {
 func (d *DB) MarkExpiredSessions(ctx context.Context) (int64, error) {
 	result, err := d.sql.ExecContext(ctx, `
 		UPDATE sessions SET status = 'expired'
-		WHERE status = 'active'
-		  AND expires_at <= $1
-		  AND device_id NOT IN (
-		      SELECT id FROM devices WHERE always_connected = TRUE
-		  )
+		WHERE status = 'active' AND expires_at <= $1
 	`, time.Now().UTC())
 	if err != nil {
 		return 0, err
