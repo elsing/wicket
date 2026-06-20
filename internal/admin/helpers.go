@@ -3,6 +3,9 @@ package admin
 import (
 	"fmt"
 	"net/http"
+	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/wicket-vpn/wicket/internal/db"
@@ -16,51 +19,28 @@ func firstChar(s string) string {
 	return "?"
 }
 
-// itoa converts an int to its string representation without importing strconv.
+// itoa converts an int to its string representation for use in templates.
 func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	negative := n < 0
-	if negative {
-		n = -n
-	}
-	result := ""
-	for n > 0 {
-		result = string(rune('0'+n%10)) + result
-		n /= 10
-	}
-	if negative {
-		result = "-" + result
-	}
-	return result
+	return strconv.Itoa(n)
 }
 
 // eventClass returns a CSS class for an audit log event badge.
 func eventClass(event string) string {
-	if len(event) > 7 && event[:7] == "session" {
+	switch {
+	case strings.HasPrefix(event, "session"):
 		return "event-session"
-	}
-	if len(event) > 6 && event[:6] == "device" {
+	case strings.HasPrefix(event, "device"):
 		return "event-device"
-	}
-	if len(event) > 4 && event[:4] == "peer" {
+	case strings.HasPrefix(event, "peer"):
 		return "event-peer"
+	default:
+		return "event-default"
 	}
-	return "event-default"
 }
 
 // groupHasRoute checks whether a group has a specific subnet assigned.
 func groupHasRoute(groupID, routeID string, groupRoutes map[string][]string) bool {
-	if groupRoutes == nil {
-		return false
-	}
-	for _, sid := range groupRoutes[groupID] {
-		if sid == routeID {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(groupRoutes[groupID], routeID)
 }
 
 // humanEvent converts an event key like "device.approved" to "Device Approved".
@@ -150,10 +130,5 @@ func agentOptionLabel(a *db.Agent) string {
 // agentAssigned reports whether agentID is in the assigned list.
 // Called from admin.templ.
 func agentAssigned(agentID string, assigned []string) bool {
-	for _, id := range assigned {
-		if id == agentID {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(assigned, agentID)
 }

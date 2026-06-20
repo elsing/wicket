@@ -158,10 +158,10 @@ func runLoop(ctx context.Context, privKey string) {
 type expiryTracker struct {
 	mu     sync.Mutex
 	timers map[string]*time.Timer // publicKey -> timer
-	pm     wireguard.PeerManager
+	pm     *wireguard.LocalPeerManager
 }
 
-func newExpiryTracker(pm wireguard.PeerManager) *expiryTracker {
+func newExpiryTracker(pm *wireguard.LocalPeerManager) *expiryTracker {
 	return &expiryTracker{
 		timers: make(map[string]*time.Timer),
 		pm:     pm,
@@ -310,7 +310,7 @@ func connect(ctx context.Context, privKey string) error {
 }
 
 // sendStats reads WireGuard peer stats and sends them to the server.
-func sendStats(ctx context.Context, conn *websocket.Conn, pm wireguard.PeerManager) {
+func sendStats(ctx context.Context, conn *websocket.Conn, pm *wireguard.LocalPeerManager) {
 	stats, err := pm.GetStats()
 	if err != nil {
 		log.Printf("getting WireGuard stats: %v", err)
@@ -335,7 +335,7 @@ func sendStats(ctx context.Context, conn *websocket.Conn, pm wireguard.PeerManag
 	})
 }
 
-func handleMessage(ctx context.Context, conn *websocket.Conn, pm wireguard.PeerManager, expiry *expiryTracker, env agent.Envelope) error {
+func handleMessage(ctx context.Context, conn *websocket.Conn, pm *wireguard.LocalPeerManager, expiry *expiryTracker, env agent.Envelope) error {
 	switch env.Type {
 	case agent.MsgSync:
 		payload, err := decodePayload[agent.SyncPayload](env.Payload)
@@ -379,7 +379,7 @@ func handleMessage(ctx context.Context, conn *websocket.Conn, pm wireguard.PeerM
 }
 
 // applySync reconciles the full peer list from Wicket.
-func applySync(pm wireguard.PeerManager, expiry *expiryTracker, payload agent.SyncPayload) error {
+func applySync(pm *wireguard.LocalPeerManager, expiry *expiryTracker, payload agent.SyncPayload) error {
 	// Set the interface IP address if provided in the sync payload.
 	// This ensures the agent's WireGuard interface has the correct address
 	// (the .1 of its VPN pool) for routing to work.
@@ -423,7 +423,7 @@ func applySync(pm wireguard.PeerManager, expiry *expiryTracker, payload agent.Sy
 	return nil
 }
 
-func addPeer(pm wireguard.PeerManager, p agent.PeerConfig) error {
+func addPeer(pm *wireguard.LocalPeerManager, p agent.PeerConfig) error {
 	ipStr := p.AssignedIP
 	if ip, _, err := net.ParseCIDR(p.AssignedIP); err == nil {
 		ipStr = ip.String()

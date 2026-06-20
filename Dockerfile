@@ -1,21 +1,26 @@
 # ── Build stage ───────────────────────────────────────────────────────────────
 FROM golang:1.26-alpine AS builder
 
+# Set by buildx per target platform, e.g. "linux"/"arm64" — do not hardcode,
+# this stage is built once per platform in --platforms.
+ARG TARGETOS
+ARG TARGETARCH
+
 RUN apk add --no-cache git
 
 WORKDIR /build
-
-RUN go install github.com/a-h/templ/cmd/templ@latest
 
 COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
 
-RUN templ generate && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+# templ is a go.mod tool dependency (pinned version) — `go tool templ` uses
+# exactly that version, no separate install needed.
+RUN go tool templ generate && \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -ldflags="-s -w" -o /wicket ./cmd/wicket && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -ldflags="-s -w" -o /wicket-agent ./cmd/wicket-agent
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────

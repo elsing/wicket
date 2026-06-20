@@ -22,7 +22,7 @@ import (
 // Service is the central business logic layer.
 type Service struct {
 	db         *db.DB
-	peers      wireguard.PeerManager
+	peers      *wireguard.LocalPeerManager
 	cfg        *config.Config
 	log        *zap.Logger
 	eventCh    chan Event
@@ -74,7 +74,7 @@ func (s *Service) notifyAgentPeerUpdate(ctx context.Context, dev *db.Device, ses
 }
 
 // NewService constructs the core service.
-func NewService(database *db.DB, peers wireguard.PeerManager, cfg *config.Config, log *zap.Logger) *Service {
+func NewService(database *db.DB, peers *wireguard.LocalPeerManager, cfg *config.Config, log *zap.Logger) *Service {
 	return &Service{
 		db:      database,
 		peers:   peers,

@@ -174,6 +174,3 @@ func normaliseIPNet(n net.IPNet) net.IPNet {
 	}
 	return n
 }
-
-// compile-time interface check
-var _ PeerManager = (*LocalPeerManager)(nil)

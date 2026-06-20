@@ -18,10 +18,9 @@ A self-hosted WireGuard VPN management portal with OIDC SSO, session management,
 
 ### 1. Prerequisites
 
-```bash
-# Install templ (required to generate Go code from .templ files)
-go install github.com/a-h/templ/cmd/templ@v0.2.747
-```
+templ generates Go code from `.templ` files. It's a `go.mod` build tool
+dependency, so `make build` fetches and runs it automatically — nothing to
+install separately.
 
 ### 2. Clone and configure
 
@@ -48,24 +47,24 @@ openssl rand -hex 32  # → WICKET_ADMIN_SESSION_SECRET
 ### 4. Build and run
 
 ```bash
-# Generate templ files + build
-make build
-
-# Or with Docker
+# Docker: pulls the published image, no Go/templ toolchain needed
 docker compose up
+
+# Or build from source
+make build
 ```
 
 ### 5. First run
 
 On first start, navigate to `http://your-server:8080` — you'll be redirected to Authentik.
-The first user to log in should be promoted to admin:
+Promote the first user to admin from the host running the server:
 
 ```bash
 wicket user list
-wicket user admin --email you@example.com  # TODO: implement
+wicket make-admin --email you@example.com
 ```
 
-Or directly via the admin portal at `http://localhost:9090` (accessible from the host only).
+Or use the admin portal at `http://localhost:9090` (accessible from the host only).
 
 ## CLI Usage
 
@@ -81,21 +80,32 @@ wicket user list
 wicket reconcile
 ```
 
+Full reference: [docs/cli.md](docs/cli.md).
+
 ## Architecture
 
 ```
 Public Portal (:8080)  ─┐
-Admin Portal  (:9090)  ─┤─► Core Service ─► SQLite + wgctrl
+Admin Portal  (:9090)  ─┤─► Core Service ─► PostgreSQL + wgctrl
 CLI (Unix socket)      ─┘
                              ↕ WebSocket
                           Remote Agents
 ```
 
+Details: [docs/architecture.md](docs/architecture.md).
+
 ## Configuration
 
-See `config.example.yaml` for all options with documentation.
+See `config.example.yaml` for all options with inline documentation, and
+[docs/configuration.md](docs/configuration.md) for the parts that aren't
+obvious from the comments (env var precedence, validation rules, what each
+section actually affects).
 
 All secrets should be set via environment variables — never in `config.yaml`.
+
+## Remote agents
+
+For multi-site or HA setups, see [docs/agents.md](docs/agents.md).
 
 ## License
 

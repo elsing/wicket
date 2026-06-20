@@ -43,7 +43,7 @@ type AgentPeer struct {
 
 type Reconciler struct {
 	db       *db.DB
-	peers    wireguard.PeerManager
+	peers    *wireguard.LocalPeerManager
 	svc      *Service
 	agentHub AgentPusher
 	log      *zap.Logger
@@ -56,7 +56,7 @@ type Reconciler struct {
 }
 
 // NewReconciler creates a Reconciler.
-func NewReconciler(database *db.DB, peers wireguard.PeerManager, svc *Service, retainMetrics time.Duration, log *zap.Logger) *Reconciler {
+func NewReconciler(database *db.DB, peers *wireguard.LocalPeerManager, svc *Service, retainMetrics time.Duration, log *zap.Logger) *Reconciler {
 	return &Reconciler{
 		trigger: make(chan struct{}, 1),
 		db:     database,

@@ -1,8 +1,12 @@
 services:
   wicket:
-    build: .
+    image: ghcr.io/elsing/wicket:latest
+    # Building from source instead of pulling the published image:
+    #   build: .
     container_name: wicket
-    restart: unless-stopped
+    restart: always
+    depends_on:
+      - wicket-db
 
     cap_add:
       - NET_ADMIN   # required: manage WireGuard interface and routing rules
@@ -47,7 +51,7 @@ services:
   wicket-db:
     image: postgres:16-alpine
     container_name: wicket-db
-    restart: unless-stopped
+    restart: always
     ports:
       - "5432:5432"
     environment:

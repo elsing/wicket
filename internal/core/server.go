@@ -23,7 +23,7 @@ type Server struct {
 	cfg        *config.Config
 	log        *zap.Logger
 	db         *db.DB
-	peers      wireguard.PeerManager
+	peers      *wireguard.LocalPeerManager
 	svc        *Service
 	reconciler *Reconciler
 	agentHub   *agentpkg.Hub

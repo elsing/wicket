@@ -3,8 +3,8 @@ package portal
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -17,14 +17,10 @@ func autoRenewVal(val bool) string {
 }
 
 // urlEncode percent-encodes a WireGuard config string for use in a data: URI.
+// PathEscape (not QueryEscape) is required: QueryEscape turns spaces into
+// literal "+", which a data: URI does not decode back to a space.
 func urlEncode(s string) string {
-	s = strings.ReplaceAll(s, "%", "%25")
-	s = strings.ReplaceAll(s, "\n", "%0A")
-	s = strings.ReplaceAll(s, "\r", "%0D")
-	s = strings.ReplaceAll(s, " ", "%20")
-	s = strings.ReplaceAll(s, "#", "%23")
-	s = strings.ReplaceAll(s, "+", "%2B")
-	return s
+	return url.PathEscape(s)
 }
 
 // formatDuration formats a duration for display. Shows ∞ for durations over a year.

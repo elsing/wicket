@@ -48,9 +48,6 @@ func (d *DB) Close() error { return d.sql.Close() }
 // SQL returns the underlying *sql.DB.
 func (d *DB) SQL() *sql.DB { return d.sql }
 
-// ReadSQL returns the same pool — Postgres handles concurrency natively.
-func (d *DB) ReadSQL() *sql.DB { return d.sql }
-
 // Ping checks the database is reachable.
 func (d *DB) Ping() error { return d.sql.Ping() }
 
@@ -115,47 +112,15 @@ func runMigrations(db *sql.DB) error {
 }
 
 // execMigration runs each statement in a migration individually.
-// Ignores empty statements. Skips ADD COLUMN if column already exists.
-// Skips RENAME COLUMN if source doesn't exist or target already does.
+// Ignores empty statements. Migrations must use idempotent SQL
+// (e.g. ADD COLUMN IF NOT EXISTS) — the "already exists" fallback below
+// only catches statements that have no IF [NOT] EXISTS form, like CREATE TRIGGER.
 func execMigration(db *sql.DB, sqlStr string) error {
 	stmts := splitStatements(sqlStr)
 	for _, stmt := range stmts {
 		stmt = strings.TrimSpace(stmt)
 		if stmt == "" {
 			continue
-		}
-
-		if isAddColumn(stmt) {
-			table, col := parseAddColumn(stmt)
-			if table != "" && col != "" {
-				exists, err := columnExists(db, table, col)
-				if err != nil {
-					return err
-				}
-				if exists {
-					continue
-				}
-			}
-		}
-
-		if isRenameColumn(stmt) {
-			table, oldCol, newCol := parseRenameColumn(stmt)
-			if table != "" {
-				srcExists, err := columnExists(db, table, oldCol)
-				if err != nil {
-					return err
-				}
-				if !srcExists {
-					continue
-				}
-				dstExists, err := columnExists(db, table, newCol)
-				if err != nil {
-					return err
-				}
-				if dstExists {
-					continue
-				}
-			}
 		}
 
 		if _, err := db.Exec(stmt); err != nil {
@@ -168,43 +133,6 @@ func execMigration(db *sql.DB, sqlStr string) error {
 		}
 	}
 	return nil
-}
-
-func columnExists(db *sql.DB, table, column string) (bool, error) {
-	var exists bool
-	err := db.QueryRow(`
-		SELECT EXISTS(
-			SELECT 1 FROM information_schema.columns
-			WHERE table_name = $1 AND column_name = $2
-		)
-	`, strings.ToLower(table), strings.ToLower(column)).Scan(&exists)
-	return exists, err
-}
-
-func isAddColumn(stmt string) bool {
-	upper := strings.ToUpper(strings.TrimSpace(stmt))
-	return strings.HasPrefix(upper, "ALTER TABLE") && strings.Contains(upper, "ADD COLUMN")
-}
-
-func parseAddColumn(stmt string) (table, column string) {
-	words := strings.Fields(stmt)
-	if len(words) >= 6 {
-		return words[2], words[5]
-	}
-	return "", ""
-}
-
-func isRenameColumn(stmt string) bool {
-	upper := strings.ToUpper(strings.TrimSpace(stmt))
-	return strings.HasPrefix(upper, "ALTER TABLE") && strings.Contains(upper, "RENAME COLUMN")
-}
-
-func parseRenameColumn(stmt string) (table, oldCol, newCol string) {
-	words := strings.Fields(stmt)
-	if len(words) >= 8 {
-		return words[2], words[5], words[7]
-	}
-	return "", "", ""
 }
 
 // splitStatements splits SQL on semicolons, respecting BEGIN...END blocks.
@@ -270,11 +198,4 @@ func stripInlineComments(src string) string {
 
 func isAlpha(b byte) bool {
 	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || b == '_'
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

@@ -1,7 +1,5 @@
-// Package wireguard provides the PeerManager interface and implementations
-// for managing WireGuard peers. The core never calls wgctrl directly —
-// everything goes through this interface so the local and remote agent
-// implementations are interchangeable.
+// Package wireguard manages WireGuard peers via wgctrl. Nothing outside
+// this package should reference wgctrl types directly.
 package wireguard
 
 import (
@@ -34,24 +32,3 @@ type PeerStats struct {
 	LastHandshake time.Time // zero if never connected
 }
 
-// PeerManager is the interface for all WireGuard peer operations.
-// The local implementation talks to wgctrl directly.
-// The remote implementation delegates to an agent over WebSocket.
-// Nothing outside this package should reference wgctrl types.
-type PeerManager interface {
-	// AddPeer adds or replaces a peer on the WireGuard interface.
-	AddPeer(cfg PeerConfig) error
-
-	// RemovePeer removes a peer by its public key.
-	// It is not an error if the peer does not exist (idempotent).
-	RemovePeer(publicKey string) error
-
-	// ListPeers returns the public keys of all currently configured peers.
-	ListPeers() ([]string, error)
-
-	// GetStats returns current WireGuard statistics for all peers.
-	GetStats() ([]PeerStats, error)
-
-	// Close releases any resources held by the manager.
-	Close() error
-}
