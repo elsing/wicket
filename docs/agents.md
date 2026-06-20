@@ -10,9 +10,16 @@ for the wire protocol. This doc covers setting one up.
 
 ## 1. Register the agent
 
-In the admin portal: **Agents → Register**. This creates an `Agent` row and
-returns a one-time bearer token — copy it now, it's bcrypt-hashed at rest
-and isn't shown again. If you lose it, revoke and re-register.
+In the admin portal: **Agents → Register**. This creates an `Agent` row,
+generates its WireGuard keypair server-side, and returns a one-time bearer
+token — copy the token now, it's bcrypt-hashed at rest and isn't shown
+again. If you lose it, revoke and re-register.
+
+Generating the keypair server-side (rather than letting the agent generate
+its own) means the agent's public key — and every device config that
+embeds it as an `Endpoint` — stays stable even if you wipe and reinstall
+the agent host later. See [Rotating an agent's key](#rotating-an-agents-key)
+to change it deliberately.
 
 ## 2. Install on the remote host
 
@@ -34,9 +41,12 @@ AGENT_TOKEN=xxx WICKET_SERVER=wss://your-wicket-server/agent/connect \
 ```
 
 The script downloads the `wicket-agent` binary from the core
-(`/agent/download`), generates a WireGuard keypair locally (the private key
-never leaves the agent host), and installs a `systemd` unit that runs it
-with `Restart=always`.
+(`/agent/download`), generates a local WireGuard keypair as a bootstrap
+placeholder, and installs a `systemd` unit that runs it with
+`Restart=always`. That local key is superseded immediately on first
+connect: the core sends the agent's *real* (server-generated) private key
+in the first `sync` message, and the agent reconfigures its interface with
+that instead.
 
 ```bash
 systemctl status wicket-agent
@@ -55,6 +65,25 @@ to the agent instead of the local WireGuard interface. If the group also
 sets `endpoint_override`, generated client configs point at that endpoint
 instead of the core's; otherwise they use the agent's own `endpoint` field
 (set when registering the agent).
+
+## Rotating an agent's key
+
+```bash
+wicket agent rotate-key --id <agent-id>                       # generate a fresh keypair
+wicket agent rotate-key --id <agent-id> --private-key <key>   # import an existing one instead
+```
+
+This updates the `Agent` row immediately; the running agent picks up the
+new key on its next `sync` (i.e. its next reconnect — no need to touch the
+agent host). **After rotating, regenerate configs for every device in
+groups that use this agent** — each config has the agent's *old* public
+key baked in as the `[Peer] PublicKey` and won't reach the agent until
+updated.
+
+The `--private-key` import form exists for migrating an agent that was set
+up before server-side key storage existed: register it normally, then
+import its already-deployed private key so existing devices don't need new
+configs.
 
 ## Failure behavior
 

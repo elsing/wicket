@@ -41,7 +41,10 @@ Wicket ships two binaries:
   WireGuard interface and:
   - marks expired sessions, removes their peers
   - re-adds peers that are missing (e.g. after a restart)
-  - samples per-peer metrics into `metric_snapshots`
+  - restores sessions for `always_connected` devices that have lapsed
+    (`restoreAlwaysConnectedSessions` — recovery after reboots, revocations,
+    or expiry is automatic within one reconcile interval)
+  - samples per-peer metrics (including source IP) into `metric_snapshots`
   - prunes metrics older than `metrics.retention_days`
 - **`socketServer`** (`socket_commands.go`) — the Unix socket the `wicket` CLI
   talks to (`server.socket_path`, default `/var/run/wicket/core.sock`).
@@ -63,14 +66,25 @@ Wicket ships two binaries:
 - **Device** — a WireGuard peer belonging to a user. The keypair is generated
   server-side; the private key is returned once in the downloadable config
   and never persisted (`config_downloaded` is a one-time-download guard).
+  `always_connected` (admin-only toggle) gives a device a permanent session
+  regardless of its group's `session_duration` — for servers/infra devices
+  that shouldn't need re-auth — and the reconciler actively restores that
+  session if it ever lapses.
 - **Session** — the thing that actually puts a device's peer onto WireGuard.
   A device only has a live peer while it has a non-expired, non-revoked
   session; the reconciler enforces this. `auto_renew` on the device causes a
-  new session to be created automatically on portal login.
+  new session to be created automatically on portal login; `always_connected`
+  goes further and keeps it active even with no logins at all.
 - **Agent** — a registered remote `wicket-agent`. Has its own `vpn_pool` CIDR,
-  WireGuard public key, and bearer token (`token` is bcrypt-hashed). A group
-  can be pinned to specific agents (`group_agents`) so its devices' peers are
-  pushed to those agents instead of the local interface.
+  WireGuard keypair, and bearer token (`token` is bcrypt-hashed). Unlike a
+  device's keypair, the agent's `wg_private_key` is persisted server-side
+  (generated at registration, in `Service.GenerateAgentKeypair`) so the
+  agent's public key — and therefore every device config that points at it
+  as an endpoint — stays stable even if the agent process is reinstalled.
+  `wicket agent rotate-key` regenerates (or imports) it; the agent picks up
+  the new key automatically on its next `sync`. A group can be pinned to
+  specific agents (`group_agents`) so its devices' peers are pushed to those
+  agents instead of the local interface.
 - **AuditLog** — append-only event log (`session.created`, `peer.removed`,
   `user.admin.grant`, etc.), shown in the admin UI.
 
@@ -102,11 +116,22 @@ authenticate with a bearer token, and exchange a small JSON protocol
 
 | Direction | Message | Purpose |
 |---|---|---|
-| core → agent | `sync` | full peer list, sent right after connect |
+| core → agent | `sync` | full peer list + the agent's WireGuard private key, sent right after connect |
 | core → agent | `peer.add` / `peer.remove` | incremental peer changes |
-| agent → core | `ready` | agent is up, reports its WireGuard public key |
+| core → agent | `request.stats` | ask the agent to report stats immediately, instead of waiting for its periodic timer |
+| agent → core | `ready` | agent is up (hostname, agent version) |
 | agent → core | `ack` / `error` | result of a peer operation |
-| agent → core | `status` | periodic peer stats (bytes, last handshake) |
+| agent → core | `status` | periodic peer stats (bytes, last handshake, source IP) |
+
+The agent's WireGuard keypair is generated **server-side** when the agent is
+registered (Agents → Register in the admin portal), not by the agent itself.
+The core sends the private key down in the `sync` payload, and the agent
+configures its local interface with whatever it's given — so `wicket agent
+rotate-key` can change an agent's key centrally and it takes effect on the
+agent's next reconnect, with no access to the agent host required. (The
+install script still generates a local keypair via `wicket-agent
+-generate-key` as a bootstrap/legacy fallback, but in normal operation
+that key is immediately superseded by the server-issued one.)
 
 `wicket-agent` is configured entirely by CLI flags (`-server`, `-token`,
 `-interface`, `-listen-port`, `-private-key`), not by `config.yaml` — it
