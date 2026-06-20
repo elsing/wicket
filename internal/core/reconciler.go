@@ -137,6 +137,7 @@ func (r *Reconciler) pass() {
 
 	r.markExpiredSessions(ctx)
 	r.removeExpiredPeers(ctx)
+	r.restoreAlwaysConnectedSessions(ctx)
 	r.ensureActivePeers(ctx)
 	r.sampleMetrics(ctx)
 	r.pruneMetrics(ctx)
@@ -170,6 +171,7 @@ func (r *Reconciler) removeExpiredPeers(ctx context.Context) {
 		JOIN users u ON u.id = d.user_id
 		WHERE d.is_approved = TRUE
 		  AND d.is_active = TRUE
+		  AND d.always_connected = FALSE
 		  AND NOT EXISTS (
 		      SELECT 1 FROM sessions s
 		      WHERE s.device_id = d.id
@@ -252,6 +254,49 @@ func (r *Reconciler) removeExpiredPeers(ctx context.Context) {
 				zap.String("device", p.deviceID),
 				zap.Error(err),
 			)
+		}
+	}
+}
+
+// restoreAlwaysConnectedSessions ensures always-connected devices always have
+// a valid active session. Called on every reconciler pass so recovery after
+// reboots, revocations, or expiry is automatic within one interval.
+func (r *Reconciler) restoreAlwaysConnectedSessions(ctx context.Context) {
+	devices, err := r.db.ListAlwaysConnectedDevices(ctx)
+	if err != nil {
+		r.log.Error("reconciler: listing always-connected devices", zap.Error(err))
+		return
+	}
+
+	for _, dev := range devices {
+		if !dev.IsApproved || !dev.IsActive {
+			continue
+		}
+
+		// Check for a valid active session (not expired).
+		existing, err := r.db.GetActiveSessionForDevice(ctx, dev.ID)
+		if err == nil && existing != nil {
+			continue // healthy, nothing to do
+		}
+
+		// No valid session — clean up any stale 'active' rows that would block
+		// INSERT (the partial unique index only allows one active row per device).
+		if _, err := r.db.SQL().ExecContext(ctx, `
+			UPDATE sessions SET status = 'expired'
+			WHERE device_id = $1 AND status = 'active'
+		`, dev.ID); err != nil {
+			r.log.Warn("reconciler: clearing stale session for always-connected device",
+				zap.String("device", dev.Name), zap.Error(err))
+			continue
+		}
+
+		// Now safe to create a fresh session.
+		if _, err := r.svc.ActivateSession(ctx, dev.ID, dev.UserID, "system"); err != nil {
+			r.log.Warn("reconciler: restoring always-connected session",
+				zap.String("device", dev.Name), zap.Error(err))
+		} else {
+			r.log.Info("reconciler: restored always-connected session",
+				zap.String("device", dev.Name))
 		}
 	}
 }
@@ -442,6 +487,7 @@ func (r *Reconciler) sampleMetrics(ctx context.Context) {
 			DeviceID:      dev.ID,
 			BytesSent:     stat.BytesSent,
 			BytesReceived: stat.BytesReceived,
+			SourceIP:      stat.SourceIP,
 		}
 		if !stat.LastHandshake.IsZero() {
 			snap.LastHandshake = sql.NullTime{Time: stat.LastHandshake, Valid: true}

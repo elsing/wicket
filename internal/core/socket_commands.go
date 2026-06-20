@@ -76,6 +76,48 @@ func dispatchSocketCommand(conn net.Conn, svc *Service, log *zap.Logger) {
 		}
 		respond(SocketResponse{OK: true, Data: "session revoked"})
 
+	case "session.create":
+		var p struct {
+			DeviceID string `json:"device_id"`
+			Duration string `json:"duration,omitempty"` // optional override, e.g. "24h"
+		}
+		if err := json.Unmarshal(req.Payload, &p); err != nil {
+			respond(SocketResponse{OK: false, Error: "invalid payload: " + err.Error()})
+			return
+		}
+		if p.DeviceID == "" {
+			respond(SocketResponse{OK: false, Error: "device_id is required"})
+			return
+		}
+		dev, err := svc.db.GetDeviceByID(ctx, p.DeviceID)
+		if err != nil {
+			respond(SocketResponse{OK: false, Error: "device not found: " + p.DeviceID})
+			return
+		}
+		if !dev.IsApproved || !dev.IsActive {
+			respond(SocketResponse{OK: false, Error: "device is not approved or active"})
+			return
+		}
+		session, err := svc.ActivateSession(ctx, p.DeviceID, dev.UserID, "cli")
+		if err != nil {
+			respond(SocketResponse{OK: false, Error: err.Error()})
+			return
+		}
+		// Optional duration override — extend immediately after creation.
+		if p.Duration != "" {
+			d, err := time.ParseDuration(p.Duration)
+			if err != nil {
+				respond(SocketResponse{OK: false, Error: "invalid duration: " + err.Error()})
+				return
+			}
+			session, err = svc.AdminExtendSession(ctx, session.ID, "cli", "127.0.0.1", d)
+			if err != nil {
+				respond(SocketResponse{OK: false, Error: "session created but extend failed: " + err.Error()})
+				return
+			}
+		}
+		respond(SocketResponse{OK: true, Data: session})
+
 	case "session.extend":
 		var p struct {
 			SessionID string `json:"session_id"`
@@ -190,8 +232,103 @@ func dispatchSocketCommand(conn net.Conn, svc *Service, log *zap.Logger) {
 		}
 		respond(SocketResponse{OK: true, Data: "admin granted to " + p.Email})
 
+	case "user.remove-admin":
+		var p struct {
+			Email string `json:"email"`
+		}
+		if err := json.Unmarshal(req.Payload, &p); err != nil {
+			respond(SocketResponse{OK: false, Error: "invalid payload: " + err.Error()})
+			return
+		}
+		if p.Email == "" {
+			respond(SocketResponse{OK: false, Error: "email is required"})
+			return
+		}
+		user, err := svc.db.GetUserByEmail(ctx, p.Email)
+		if err != nil {
+			respond(SocketResponse{OK: false, Error: "user not found: " + p.Email + " (have they logged in yet?)"})
+			return
+		}
+		if err := svc.db.SetUserAdmin(ctx, user.ID, false); err != nil {
+			respond(SocketResponse{OK: false, Error: err.Error()})
+			return
+		}
+		respond(SocketResponse{OK: true, Data: "admin revoked from " + p.Email})
 
-	case "admin.create-local":
+
+	case "agent.rotate-key":
+		var p struct {
+			AgentID    string `json:"agent_id"`
+			PrivateKey string `json:"private_key,omitempty"`
+		}
+		if err := json.Unmarshal(req.Payload, &p); err != nil {
+			respond(SocketResponse{OK: false, Error: "invalid payload: " + err.Error()})
+			return
+		}
+		if p.AgentID == "" {
+			respond(SocketResponse{OK: false, Error: "agent_id is required"})
+			return
+		}
+		agent, err := svc.db.GetAgentByID(ctx, p.AgentID)
+		if err != nil {
+			respond(SocketResponse{OK: false, Error: "agent not found: " + p.AgentID})
+			return
+		}
+		var privKey, pubKey string
+		if p.PrivateKey != "" {
+			// Import mode — derive public key from the supplied private key.
+			privKey = p.PrivateKey
+			pubKey, err = svc.DeriveAgentPublicKey(privKey)
+			if err != nil {
+				respond(SocketResponse{OK: false, Error: "invalid private key: " + err.Error()})
+				return
+			}
+		} else {
+			// Generate mode — fresh keypair.
+			privKey, pubKey, err = svc.GenerateAgentKeypair()
+			if err != nil {
+				respond(SocketResponse{OK: false, Error: "generating keypair: " + err.Error()})
+				return
+			}
+		}
+		if err := svc.db.UpdateAgentKeypair(ctx, agent.ID, privKey, pubKey); err != nil {
+			respond(SocketResponse{OK: false, Error: "updating keypair: " + err.Error()})
+			return
+		}
+		respond(SocketResponse{OK: true, Data: map[string]string{
+			"agent_id":   agent.ID,
+			"agent_name": agent.Name,
+			"public_key": pubKey,
+			"note":       "Restart the agent to pick up the new key. All device configs must be regenerated.",
+		}})
+
+	case "agent.list":
+		agents, err := svc.db.ListAgents(ctx)
+		if err != nil {
+			respond(SocketResponse{OK: false, Error: err.Error()})
+			return
+		}
+		// Strip private keys from the response.
+		type agentSummary struct {
+			ID          string `json:"id"`
+			Name        string `json:"name"`
+			WGPublicKey string `json:"wg_public_key"`
+			Endpoint    string `json:"endpoint"`
+			IsActive    bool   `json:"is_active"`
+		}
+		summaries := make([]agentSummary, 0, len(agents))
+		for _, a := range agents {
+			summaries = append(summaries, agentSummary{
+				ID:          a.ID,
+				Name:        a.Name,
+				WGPublicKey: a.WGPublicKey,
+				Endpoint:    a.Endpoint,
+				IsActive:    a.IsActive,
+			})
+		}
+		respond(SocketResponse{OK: true, Data: summaries})
+
+	
 		var p struct {
 			Username string `json:"username"`
 			Password string `json:"password"`
@@ -213,7 +350,7 @@ func dispatchSocketCommand(conn net.Conn, svc *Service, log *zap.Logger) {
 			respond(SocketResponse{OK: false, Error: err.Error()})
 			return
 		}
-		respond(SocketResponse{OK: true, Data: "local admin created"})
+		respond(SocketResponse{OK: true, Data: "local admin created or updated"})
 
 	default:
 		respond(SocketResponse{

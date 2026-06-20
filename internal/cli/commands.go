@@ -284,12 +284,43 @@ var healthCmd = &cobra.Command{
 // init — wire everything up
 // ─────────────────────────────────────────────────────────────────────────────
 
+var (
+	sessionCreateDeviceID string
+	sessionCreateDuration string
+)
+
+var sessionCreateCmd = &cobra.Command{
+	Use:   "create",
+	Short: "Create a new session for a device",
+	Long:  "Creates an active VPN session for a device. Use 'wicket device list' to find the device ID.",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if sessionCreateDeviceID == "" {
+			return fmt.Errorf("--device is required")
+		}
+		payload := map[string]string{"device_id": sessionCreateDeviceID}
+		if sessionCreateDuration != "" {
+			payload["duration"] = sessionCreateDuration
+		}
+		resp, err := sendCommand("session.create", payload)
+		if err != nil {
+			return err
+		}
+		mustOK(resp)
+		fmt.Printf("✓ Session created for device %s.\n", sessionCreateDeviceID)
+		return nil
+	},
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 func init() {
 	// session subcommands
 	sessionRevokeCmd.Flags().StringVar(&sessionRevokeID, "id", "", "session ID to revoke")
 	sessionExtendCmd.Flags().StringVar(&sessionExtendID, "id", "", "session ID to extend")
 	sessionExtendCmd.Flags().StringVar(&sessionExtendDuration, "duration", "24h", "how long to extend by (e.g. 24h, 12h)")
-	sessionCmd.AddCommand(sessionListCmd, sessionRevokeCmd, sessionExtendCmd)
+	sessionCreateCmd.Flags().StringVar(&sessionCreateDeviceID, "device", "", "device ID to create a session for")
+	sessionCreateCmd.Flags().StringVar(&sessionCreateDuration, "duration", "", "optional duration override (e.g. 24h)")
+	sessionCmd.AddCommand(sessionListCmd, sessionRevokeCmd, sessionExtendCmd, sessionCreateCmd)
 
 	// device subcommands
 	deviceListCmd.Flags().BoolVar(&deviceListPending, "pending", false, "show only pending devices")
@@ -305,7 +336,7 @@ func init() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// make-admin command
+// make-admin / remove-admin commands
 // ─────────────────────────────────────────────────────────────────────────────
 
 var makeAdminEmail string
@@ -328,9 +359,30 @@ var makeAdminCmd = &cobra.Command{
 	},
 }
 
+var removeAdminEmail string
+
+var removeAdminCmd = &cobra.Command{
+	Use:   "remove-admin",
+	Short: "Revoke admin privileges from a user by email",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if removeAdminEmail == "" {
+			return fmt.Errorf("--email is required")
+		}
+		resp, err := sendCommand("user.remove-admin", map[string]string{"email": removeAdminEmail})
+		if err != nil {
+			return err
+		}
+		mustOK(resp)
+		fmt.Printf("✓ Admin privileges revoked from %s.\n", removeAdminEmail)
+		return nil
+	},
+}
+
 func init() {
 	makeAdminCmd.Flags().StringVar(&makeAdminEmail, "email", "", "email address of the user to promote")
 	rootCmd.AddCommand(makeAdminCmd)
+	removeAdminCmd.Flags().StringVar(&removeAdminEmail, "email", "", "email address of the user to demote")
+	rootCmd.AddCommand(removeAdminCmd)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -358,7 +410,7 @@ var createLocalAdminCmd = &cobra.Command{
 			return err
 		}
 		mustOK(resp)
-		fmt.Printf("✓ Local admin account %q created.\n", localAdminUser)
+		fmt.Printf("✓ Local admin account %q created or updated.\n", localAdminUser)
 		return nil
 	},
 }
@@ -367,4 +419,70 @@ func init() {
 	createLocalAdminCmd.Flags().StringVar(&localAdminUser, "username", "", "username for local admin account")
 	createLocalAdminCmd.Flags().StringVar(&localAdminPass, "password", "", "password for local admin account")
 	rootCmd.AddCommand(createLocalAdminCmd)
+}
+
+// ── Agent commands ────────────────────────────────────────────────────────────
+
+var agentCmd = &cobra.Command{
+	Use:   "agent",
+	Short: "Manage remote agents",
+}
+
+var agentListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List all agents",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		resp, err := sendCommand("agent.list", nil)
+		if err != nil {
+			return err
+		}
+		mustOK(resp)
+		b, _ := json.MarshalIndent(resp.Data, "", "  ")
+		fmt.Println(string(b))
+		return nil
+	},
+}
+
+var (
+	agentRotateKeyID      string
+	agentRotateKeyPrivKey string
+)
+
+var agentRotateKeyCmd = &cobra.Command{
+	Use:   "rotate-key",
+	Short: "Rotate the WireGuard keypair for an agent",
+	Long: `Generates a new WireGuard keypair for the agent and stores it server-side.
+
+The agent will pick up the new key automatically on its next reconnect.
+WARNING: All device configs for groups using this agent must be regenerated
+after rotation, as they contain the agent's public key as the endpoint.
+
+To import an existing private key (e.g. migrating an agent already running):
+  wicket agent rotate-key --id <id> --private-key <base64-private-key>`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if agentRotateKeyID == "" {
+			return fmt.Errorf("--id is required (use 'wicket agent list' to find the agent ID)")
+		}
+		payload := map[string]string{
+			"agent_id": agentRotateKeyID,
+		}
+		if agentRotateKeyPrivKey != "" {
+			payload["private_key"] = agentRotateKeyPrivKey
+		}
+		resp, err := sendCommand("agent.rotate-key", payload)
+		if err != nil {
+			return err
+		}
+		mustOK(resp)
+		b, _ := json.MarshalIndent(resp.Data, "", "  ")
+		fmt.Println(string(b))
+		return nil
+	},
+}
+
+func init() {
+	agentRotateKeyCmd.Flags().StringVar(&agentRotateKeyID, "id", "", "agent ID to rotate the key for")
+	agentRotateKeyCmd.Flags().StringVar(&agentRotateKeyPrivKey, "private-key", "", "import an existing WireGuard private key instead of generating a new one")
+	agentCmd.AddCommand(agentListCmd, agentRotateKeyCmd)
+	rootCmd.AddCommand(agentCmd)
 }

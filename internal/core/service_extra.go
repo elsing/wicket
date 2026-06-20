@@ -12,6 +12,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/wicket-vpn/wicket/internal/db"
+	"github.com/wicket-vpn/wicket/internal/wireguard"
 )
 
 // DB returns the underlying DB for admin handlers that need direct access.
@@ -96,7 +97,20 @@ func (s *Service) GenerateAgentToken() (string, string, error) {
 	return token, string(hash), nil
 }
 
-// VerifyAgentToken checks a plaintext token against stored bcrypt hashes.
+// GenerateAgentKeypair generates a WireGuard keypair for a new agent.
+// Returns (privateKey, publicKey, error). Both are stored server-side so the
+// agent can be restored without invalidating existing device configs.
+func (s *Service) GenerateAgentKeypair() (string, string, error) {
+	return wireguard.GenerateKeypair()
+}
+
+// DeriveAgentPublicKey derives the WireGuard public key from a given private key.
+// Used when importing an existing agent key via the CLI.
+func (s *Service) DeriveAgentPublicKey(privateKey string) (string, error) {
+	return wireguard.ServerPublicKey(privateKey)
+}
+
+
 // Returns the matching agent or an error if no match is found.
 func (s *Service) VerifyAgentToken(ctx context.Context, token string) (*db.Agent, error) {
 	agents, err := s.db.GetActiveAgents(ctx)

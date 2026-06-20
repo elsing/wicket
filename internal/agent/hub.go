@@ -148,8 +148,20 @@ func (h *Hub) HandleConnect(w http.ResponseWriter, r *http.Request, agentID stri
 	// Touch last_seen in DB
 	_ = h.db.TouchAgentSeen(r.Context(), agentID)
 
-	// Send full sync immediately
+	// Send full sync immediately, then request stats twice:
+	// once immediately (picks up any existing peers) and once after a short
+	// delay to catch handshakes that complete just after the sync is applied.
 	ca.send <- Envelope{Type: MsgSync, MsgID: newMsgID(), Payload: syncPayload}
+	ca.send <- Envelope{Type: MsgRequestStats, MsgID: newMsgID()}
+	go func() {
+		time.Sleep(8 * time.Second)
+		h.mu.RLock()
+		_, still := h.agents[agentID]
+		h.mu.RUnlock()
+		if still {
+			ca.send <- Envelope{Type: MsgRequestStats, MsgID: newMsgID()}
+		}
+	}()
 
 	defer func() {
 		h.mu.Lock()
@@ -217,19 +229,17 @@ func (h *Hub) serveAgent(ctx context.Context, ca *ConnectedAgent) {
 func (h *Hub) handleAgentMessage(ca *ConnectedAgent, msg Envelope) {
 	switch msg.Type {
 	case MsgReady:
-		// Store the agent's WireGuard public key so client configs can use it
+		// Agent is connected. The WireGuard public key is now server-generated and
+		// stored at agent creation time — no need to update it from the ready message.
+		// We log the agent's hostname for diagnostics.
 		if b, err := json.Marshal(msg.Payload); err == nil {
 			var payload ReadyPayload
-			if err := json.Unmarshal(b, &payload); err == nil && payload.WGPublicKey != "" {
-				if err := h.db.UpdateAgentPublicKey(context.Background(), ca.ID, payload.WGPublicKey); err != nil {
-					h.log.Warn("storing agent public key", zap.Error(err))
-				} else {
-					h.log.Info("agent ready",
-						zap.String("agent", ca.Name),
-						zap.String("wg_pubkey", payload.WGPublicKey[:8]+"..."),
-						zap.String("hostname", payload.Hostname),
-					)
-				}
+			if err := json.Unmarshal(b, &payload); err == nil {
+				h.log.Info("agent ready",
+					zap.String("agent", ca.Name),
+					zap.String("hostname", payload.Hostname),
+					zap.String("version", payload.AgentVersion),
+				)
 			}
 		}
 	case MsgAck:
@@ -260,6 +270,7 @@ func (h *Hub) writeAgentMetrics(_ string, payload StatusPayload) {
 			DeviceID:      dev.ID,
 			BytesSent:     ps.BytesSent,
 			BytesReceived: ps.BytesReceived,
+			SourceIP:      ps.SourceIP,
 		}
 		if !ps.LastHandshake.IsZero() {
 			snap.LastHandshake = sql.NullTime{Time: ps.LastHandshake, Valid: true}

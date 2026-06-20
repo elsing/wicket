@@ -38,6 +38,27 @@ document.addEventListener('keydown', function(e) {
 });
 
 
+// ── Admin row dropdown menus ──────────────────────────────────────────────────
+document.addEventListener('click', function(e) {
+  const btn = e.target.closest('[data-admin-menu]');
+  if (btn) {
+    e.stopPropagation();
+    const id = btn.dataset.adminMenu;
+    const menu = document.getElementById('admin-menu-' + id);
+    if (!menu) return;
+    document.querySelectorAll('.admin-row-dropdown.open').forEach(m => {
+      if (m !== menu) m.classList.remove('open');
+    });
+    menu.classList.toggle('open');
+    return;
+  }
+  document.querySelectorAll('.admin-row-dropdown.open').forEach(m => m.classList.remove('open'));
+});
+
+document.addEventListener('htmx:afterSwap', function() {
+  document.querySelectorAll('.admin-row-dropdown.open').forEach(m => m.classList.remove('open'));
+});
+
 // ── Confirmation Modal ────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function() {
   const modal = document.createElement('div');
@@ -163,6 +184,13 @@ function refreshAfterSessionChange() {
 
 function handleEvent(event) {
   switch (event.type) {
+    case 'device.renamed':
+      // Update the name span in place — no full refresh needed.
+      if (event.device_id && event.payload?.device_name) {
+        const span = document.getElementById('dev-name-' + event.device_id);
+        if (span) span.textContent = event.payload.device_name;
+      }
+      break;
     case 'device.created':
       refreshAfterDeviceChange();
       showToast('New device pending approval', 'warning');
@@ -240,7 +268,7 @@ window.renderMetricsChart = function(deviceID, containerID) {
     legend.setAttribute('y', '10');
     legend.setAttribute('font-size', '9');
     legend.setAttribute('fill', 'var(--text-3)');
-    legend.textContent = `↑ ${fmtRate(Math.max(...points.map(p=>p.bytes_sent||0)))} ↓ ${fmtRate(Math.max(...points.map(p=>p.bytes_received||0)))} peak`;
+    legend.textContent = `↑ ${fmtBytes(Math.max(...points.map(p=>p.bytes_sent||0)))} ↓ ${fmtBytes(Math.max(...points.map(p=>p.bytes_received||0)))} peak`;
     svg.appendChild(legend);
 
     el.innerHTML = '';
@@ -252,6 +280,13 @@ function fmtRate(bps) {
   if (bps < 1024) return `${bps.toFixed(0)}B/s`;
   if (bps < 1024*1024) return `${(bps/1024).toFixed(1)}K/s`;
   return `${(bps/1024/1024).toFixed(1)}M/s`;
+}
+
+function fmtBytes(b) {
+  if (b < 1024) return `${b.toFixed(0)}B`;
+  if (b < 1024*1024) return `${(b/1024).toFixed(1)}KB`;
+  if (b < 1024*1024*1024) return `${(b/1024/1024).toFixed(1)}MB`;
+  return `${(b/1024/1024/1024).toFixed(2)}GB`;
 }
 
 // ── Group edit toggle ─────────────────────────────────────────────────────────
@@ -311,8 +346,12 @@ window.showAdminToast = function(message, type = 'info') {
 function showToast(msg, type) { window.showAdminToast(msg, type); }
 
 function initCharts() {
+  // Only render charts that haven't been populated yet — avoid re-fetching
+  // 7 days of history on every 30s table refresh.
   document.querySelectorAll('.metrics-chart').forEach(el => {
-    if (el.dataset.deviceId) window.renderMetricsChart(el.dataset.deviceId, el.id);
+    if (el.dataset.deviceId && el.children.length === 0) {
+      window.renderMetricsChart(el.dataset.deviceId, el.id);
+    }
   });
 }
 
@@ -322,10 +361,21 @@ function refreshMetrics() {
     .then(r => r.text())
     .then(html => {
       const el = document.getElementById('metrics-content');
-      if (el) {
-        el.innerHTML = html;
-        initCharts();
-      }
+      if (!el || !html.trim()) return; // never blank out existing content
+      // Preserve chart SVG content across the table refresh by stashing it,
+      // swapping the HTML, then restoring — avoids re-fetching chart data.
+      const charts = {};
+      el.querySelectorAll('.metrics-chart[id]').forEach(c => {
+        if (c.innerHTML.trim()) charts[c.id] = c.innerHTML;
+      });
+      el.innerHTML = html;
+      el.querySelectorAll('.metrics-chart[id]').forEach(c => {
+        if (charts[c.id]) {
+          c.innerHTML = charts[c.id]; // restore existing chart
+        } else if (c.dataset.deviceId) {
+          window.renderMetricsChart(c.dataset.deviceId, c.id); // new device, fetch
+        }
+      });
     })
     .catch(() => {});
 }
@@ -344,9 +394,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
 document.body.addEventListener('htmx:afterSwap', () => {
   connectWS();
-  initCharts();
   // Start/stop metrics polling based on whether we are on the metrics page
   if (document.getElementById('metrics-content')) {
+    initCharts(); // fetch charts for newly loaded page
     if (!window._metricsInterval)
       window._metricsInterval = setInterval(refreshMetrics, 30000);
   } else {

@@ -30,5 +30,6 @@ type PeerStats struct {
 	BytesSent     int64
 	BytesReceived int64
 	LastHandshake time.Time // zero if never connected
+	SourceIP      string    // real public IP:port the peer is connecting from
 }
 

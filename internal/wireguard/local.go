@@ -130,6 +130,9 @@ func (m *LocalPeerManager) GetStats() ([]PeerStats, error) {
 		if !p.LastHandshakeTime.IsZero() {
 			s.LastHandshake = p.LastHandshakeTime
 		}
+		if p.Endpoint != nil {
+			s.SourceIP = p.Endpoint.IP.String()
+		}
 		stats = append(stats, s)
 	}
 

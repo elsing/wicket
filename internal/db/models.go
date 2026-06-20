@@ -70,15 +70,15 @@ type DeviceRoute struct {
 // User represents a person who has logged in via OIDC.
 // Created automatically on first login.
 type User struct {
-	ID          string       `db:"id"`
-	OIDCSub     string       `db:"oidc_sub"` // stable OIDC subject — primary identifier
-	Email       string       `db:"email"`
-	DisplayName string       `db:"display_name"`
-	IsAdmin     bool         `db:"is_admin"`
-	IsActive    bool         `db:"is_active"`
-	CreatedAt   time.Time    `db:"created_at"`
-	UpdatedAt   time.Time    `db:"updated_at"`
-	LastLoginAt sql.NullTime `db:"last_login_at"`
+	ID          string       `db:"id"            json:"id"`
+	OIDCSub     string       `db:"oidc_sub"      json:"oidc_sub"` // stable OIDC subject — primary identifier
+	Email       string       `db:"email"         json:"email"`
+	DisplayName string       `db:"display_name"  json:"display_name"`
+	IsAdmin     bool         `db:"is_admin"      json:"is_admin"`
+	IsActive    bool         `db:"is_active"     json:"is_active"`
+	CreatedAt   time.Time    `db:"created_at"    json:"created_at"`
+	UpdatedAt   time.Time    `db:"updated_at"    json:"updated_at"`
+	LastLoginAt sql.NullTime `db:"last_login_at" json:"last_login_at"`
 
 	// Populated by joins.
 	Groups  []Group  `db:"-"`
@@ -109,9 +109,10 @@ type Device struct {
 	PublicKey        string       `db:"public_key"`
 	AssignedIP       string       `db:"assigned_ip"`
 	IsApproved       bool         `db:"is_approved"`
-	IsActive         bool         `db:"is_active"`         // admin-level toggle
-	AutoRenew        bool         `db:"auto_renew"`        // activate session on portal login
-	ConfigDownloaded bool         `db:"config_downloaded"` // one-time download guard
+	IsActive         bool         `db:"is_active"`          // admin-level toggle
+	AutoRenew        bool         `db:"auto_renew"`         // activate session on portal login
+	AlwaysConnected  bool         `db:"always_connected"`   // never expire, never evict
+	ConfigDownloaded bool         `db:"config_downloaded"`  // one-time download guard
 	CreatedAt        time.Time    `db:"created_at"`
 	UpdatedAt        time.Time    `db:"updated_at"`
 	LastSeenAt       sql.NullTime `db:"last_seen_at"`
@@ -176,16 +177,17 @@ func (s *Session) TimeRemaining() time.Duration {
 // Each agent manages its own WireGuard interface and receives peer updates
 // via WebSocket from the core.
 type Agent struct {
-	ID          string       `db:"id"`
-	Name        string       `db:"name"`
-	Description string       `db:"description"`
-	TokenHash   string       `db:"token"`
-	VPNPool     string       `db:"vpn_pool"`      // CIDR e.g. "10.1.0.0/24"
-	WGPublicKey string       `db:"wg_public_key"` // agent's WireGuard public key
-	Endpoint    string       `db:"endpoint"`      // host:port for client configs
-	IsActive    bool         `db:"is_active"`
-	LastSeenAt  sql.NullTime `db:"last_seen_at"`
-	CreatedAt   time.Time    `db:"created_at"`
+	ID           string       `db:"id"`
+	Name         string       `db:"name"`
+	Description  string       `db:"description"`
+	TokenHash    string       `db:"token"`
+	VPNPool      string       `db:"vpn_pool"`       // CIDR e.g. "10.1.0.0/24"
+	WGPublicKey  string       `db:"wg_public_key"`  // agent's WireGuard public key
+	WGPrivateKey string       `db:"wg_private_key"` // agent's WireGuard private key (server-stored)
+	Endpoint     string       `db:"endpoint"`       // host:port for client configs
+	IsActive     bool         `db:"is_active"`
+	LastSeenAt   sql.NullTime `db:"last_seen_at"`
+	CreatedAt    time.Time    `db:"created_at"`
 
 	// Set at runtime, not stored.
 	Connected bool `db:"-"`
@@ -203,6 +205,7 @@ type MetricSnapshot struct {
 	BytesSent     int64        `db:"bytes_sent"`
 	BytesReceived int64        `db:"bytes_received"`
 	LastHandshake sql.NullTime `db:"last_handshake"`
+	SourceIP      string       `db:"source_ip"` // real public IP from WireGuard endpoint
 	RecordedAt    time.Time    `db:"recorded_at"`
 }
 
