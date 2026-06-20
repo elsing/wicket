@@ -945,21 +945,32 @@ func (h *Handler) handleDeviceMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	type point struct {
-		Time          string  `json:"t"`
-		BytesSent     float64 `json:"bytes_sent"`
-		BytesReceived float64 `json:"bytes_received"`
-	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(bucketMetricDeltas(snaps)) //nolint:errcheck
+}
 
+type metricPoint struct {
+	Time          string  `json:"t"`
+	BytesSent     float64 `json:"bytes_sent"`
+	BytesReceived float64 `json:"bytes_received"`
+}
+
+// bucketMetricDeltas turns a series of cumulative-counter snapshots into
+// 1-hour delta buckets, giving a readable chart over 7 days (168 points max)
+// rather than 20k raw samples.
+//
+// Counter resets (negative deltas, e.g. peer removed and re-added) are
+// treated as zero rather than discarding the whole sample pair — devices
+// that connect briefly and disconnect (the common case for laptops/phones)
+// often have no two samples within 5 minutes of each other, and an earlier
+// version of this function skipped any pair more than 5 minutes apart,
+// which threw away all of their real traffic and showed "No data" despite
+// a populated Sent/Received column in the table next to it.
+func bucketMetricDeltas(snaps []*db.MetricSnapshot) []metricPoint {
 	if len(snaps) < 2 {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode([]point{}) //nolint:errcheck
-		return
+		return []metricPoint{}
 	}
 
-	// Bucket snapshots into 1-hour intervals and sum the deltas within each bucket.
-	// This gives a readable chart over 7 days (168 points max) rather than 20k raw samples.
-	// Counter resets (negative deltas) are treated as zero — happens when peer is re-added.
 	type bucket struct {
 		sent float64
 		recv float64
@@ -969,14 +980,18 @@ func (h *Handler) handleDeviceMetrics(w http.ResponseWriter, r *http.Request) {
 	for i := 1; i < len(snaps); i++ {
 		prev, cur := snaps[i-1], snaps[i]
 		dt := cur.RecordedAt.Sub(prev.RecordedAt).Seconds()
-		if dt <= 0 || dt > 300 {
-			// Gap > 5 min means peer was offline — skip to avoid false spike.
+		if dt <= 0 {
+			// Out-of-order or duplicate timestamp — skip, can't compute a delta.
 			continue
 		}
 		sent := float64(cur.BytesSent - prev.BytesSent)
 		recv := float64(cur.BytesReceived - prev.BytesReceived)
-		if sent < 0 { sent = 0 }
-		if recv < 0 { recv = 0 }
+		if sent < 0 {
+			sent = 0
+		}
+		if recv < 0 {
+			recv = 0
+		}
 
 		// Key by hour
 		hr := cur.RecordedAt.Truncate(time.Hour)
@@ -995,18 +1010,16 @@ func (h *Handler) handleDeviceMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
 
-	points := make([]point, 0, len(keys))
+	points := make([]metricPoint, 0, len(keys))
 	for _, k := range keys {
 		b := buckets[k]
-		points = append(points, point{
+		points = append(points, metricPoint{
 			Time:          b.hour.Format("Jan 2 15:00"),
 			BytesSent:     b.sent,
 			BytesReceived: b.recv,
 		})
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(points) //nolint:errcheck
+	return points
 }
 
 func (h *Handler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
